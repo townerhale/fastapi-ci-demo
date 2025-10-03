@@ -1,0 +1,17 @@
+[tool.interrogate]
+# Fail the check if total docstring coverage is below this threshold
+fail-under = 80
+# Report options
+verbose = 1
+quiet = false
+color = true
+# What to check
+whitelist-regex = []
+ignore-init-method = true
+ignore-init-module = true
+ignore-magic = true
+ignore-module = false
+ignore-private = false
+ignore-nested-functions = true
+ignore-nested-classes = true
+# Paths to include/exclude can also be passed on the CLI
