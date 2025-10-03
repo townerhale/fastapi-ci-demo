@@ -1,0 +1,100 @@
+# .circleci/config.yml
+#
+# This is a setup-config (setup: true) that generates and runs a single job:
+# `lint-and-unit-test`. We use the Continuation orb to "continue" the pipeline
+# with a minimal config that contains our actual job/workflow.
+#
+# Why setup: true?
+# - It enables CircleCI pipeline processing (dynamic config).
+# - This file writes a small continuation config at runtime and then executes it.
+
+version: 2.1
+setup: true
+
+orbs:
+  continuation: circleci/continuation@0.3.1
+
+# A tiny helper job that writes the real config we want to run into
+# .circleci/continued.yml and then persists it to the workspace.
+jobs:
+  generate-config:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Generate continuation config
+          command: |
+            mkdir -p .circleci
+            # Write the continued config that contains our one job & workflow.
+            cat > .circleci/continued.yml <<'YAML'
+            version: 2.1
+
+            jobs:
+              # ---- The only job we want to run ----
+              lint-and-unit-test:
+                # Use a modern Python convenience image
+                docker:
+                  - image: cimg/python:3.11
+                working_directory: ~/project
+                steps:
+                  # 1) Check out source code
+                  - checkout
+
+                  # 2) Restore pip cache by requirements.txt checksum (with fallbacks)
+                  - restore_cache:
+                      keys:
+                        - v1-pip-{{ arch }}-{{ .Branch }}-{{ checksum "requirements.txt" }}
+                        - v1-pip-{{ arch }}-{{ .Branch }}
+                        - v1-pip-{{ arch }}
+
+                  # 3) Install dependencies (ensure pip is fresh; install black explicitly)
+                  - run:
+                      name: Install dependencies
+                      command: |
+                        python -m pip install --upgrade pip
+                        pip install -r requirements.txt black
+
+                  # 4) Save pip cache
+                  - save_cache:
+                      key: v1-pip-{{ arch }}-{{ .Branch }}-{{ checksum "requirements.txt" }}
+                      paths:
+                        - ~/.cache/pip
+
+                  # 5) Lint with black (check-only)
+                  - run:
+                      name: Lint (black --check)
+                      command: black --check .
+
+                  # 6) Run ONLY unit tests and emit JUnit XML
+                  - run:
+                      name: Run unit tests (JUnit XML)
+                      command: |
+                        mkdir -p test-results
+                        pytest -q tests/unit --junitxml=test-results/junit.xml
+
+                  # 7) Upload JUnit XML so results appear in CircleCI UI
+                  - store_test_results:
+                      path: test-results
+
+            workflows:
+              lint_and_unit_tests:
+                jobs:
+                  - lint-and-unit-test
+            YAML
+
+      # Make the generated config available to the next job
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .circleci/continued.yml
+
+workflows:
+  # Setup workflow: generate the dynamic config and then continue the pipeline
+  setup:
+    jobs:
+      - generate-config
+      - continuation/continue:
+          requires:
+            - generate-config
+          configuration_path: .circleci/continued.yml
