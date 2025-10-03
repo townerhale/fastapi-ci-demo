@@ -32,3 +32,6 @@ def root() -> dict:
         "docs": "/docs",
         "redoc": "/redoc",
     }
+
+app.include_router(item_router)
+
