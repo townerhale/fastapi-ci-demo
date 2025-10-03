@@ -1,0 +1,7 @@
+# .coveragerc (repo root)
+[run]
+omit =
+    */__init__.py
+
+[report]
+precision = 1
