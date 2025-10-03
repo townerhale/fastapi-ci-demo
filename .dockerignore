@@ -1,0 +1,27 @@
+# Use the same patterns as .gitignore to shrink build context
+**
+!app/
+!pyproject.toml
+!poetry.lock
+!requirements.txt
+!requirements*.txt
+!setup.py
+!README.md
+
+# Keep out venvs, caches, tests unless needed at build time
+__pycache__/
+.venv/
+venv/
+env/
+*.py[cod]
+.pytest_cache/
+.coverage*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.git/
+.gitignore
+.DS_Store
+node_modules/

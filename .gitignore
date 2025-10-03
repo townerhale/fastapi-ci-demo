@@ -57,3 +57,25 @@ node_modules/
 
 # --- Misc ---
 *.sqlite3
+
+# --- Python build tools / installers ---
+.poetry/           # Poetry's local cache dir (rarely used, but safe)
+pip-wheel-metadata/
+pip-cache/
+.pip-cache/
+
+# --- Alternative env managers ---
+__pypackages__/    # PEP 582
+.conda/
+
+# --- Local shell/env helpers ---
+.envrc             # direnv
+*.local            # e.g., settings.local.py
+
+# --- FastAPI / docs artifacts (if generated locally) ---
+site/
+docs/_build/
+
+# --- OS / editor extras (more edge cases) ---
+*.orig
+*~
