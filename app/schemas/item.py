@@ -1,15 +1,21 @@
+"""Pydantic schemas for Items."""
+
 from pydantic import BaseModel, Field
 
 
-class ItemCreate(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    description: str = Field("", max_length=1000)
+class ItemBase(BaseModel):
+    """Shared fields across Item schemas."""
+
+    name: str = Field(..., min_length=1, description="Human-readable name")
+    description: str = Field(..., min_length=1, description="Item description")
 
 
-class Item(BaseModel):
-    id: int
-    name: str
-    description: str
+class ItemCreate(ItemBase):
+    """Schema used when creating an item via API."""
+    pass
 
-    # allow constructing from ORM objects later (SQLAlchemy)
-    model_config = {"from_attributes": True}
+
+class Item(ItemBase):
+    """Schema returned by the API for a stored item."""
+
+    id: int = Field(..., ge=1, description="Server-assigned identifier")

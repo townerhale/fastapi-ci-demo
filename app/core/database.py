@@ -1,6 +1,14 @@
+"""Database scaffolding (SQLAlchemy engine/session).
+
+This module exposes an Engine, SessionLocal factory, declarative Base, and a
+FastAPI dependency (`get_db`) for endpoint functions that need a DB session.
+"""
+
 from typing import Generator
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -25,11 +33,10 @@ Base = declarative_base()
 
 
 def get_db() -> Generator:
-    """
-    FastAPI dependency that yields a database session and ensures proper cleanup.
-    Usage:
-        def endpoint(db: Session = Depends(get_db)):
-            ...
+    """Yield a database session and ensure proper cleanup.
+
+    Yields:
+        Session: A SQLAlchemy session bound to the configured engine.
     """
     db = SessionLocal()
     try:
