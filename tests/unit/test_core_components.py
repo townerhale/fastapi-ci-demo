@@ -15,7 +15,9 @@ from app.core.config import get_settings
 from app.schemas.item import ItemCreate
 
 
-def test_settings_loads_from_env_and_ignores_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_loads_from_env_and_ignores_extras(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """
     - Set DATABASE_URL in the environment and verify get_settings() reads it.
     - Add an unrelated POSTGRES_* var to prove extra env vars are ignored.

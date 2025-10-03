@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",        # <- important: ignore unknown env vars
-        case_sensitive=True,   # keep env var names case-sensitive
+        extra="ignore",  # <- important: ignore unknown env vars
+        case_sensitive=True,  # keep env var names case-sensitive
     )
 
 

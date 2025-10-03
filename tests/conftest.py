@@ -22,6 +22,7 @@ class FakeSession:
     Extend this with methods your tests need, e.g. add(), commit(), query(), etc.
     For now, it’s just a placeholder to prove dependency overrides work.
     """
+
     def __init__(self) -> None:
         self.closed = False
 

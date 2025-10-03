@@ -8,11 +8,13 @@ router = APIRouter(prefix="/items", tags=["items"])
 _items: List[Item] = []
 _next_id: int = 1
 
+
 def _next() -> int:
     global _next_id
     nid = _next_id
     _next_id += 1
     return nid
+
 
 def _find(item_id: int) -> Optional[Item]:
     for it in _items:
@@ -20,15 +22,18 @@ def _find(item_id: int) -> Optional[Item]:
             return it
     return None
 
+
 @router.post("/", response_model=Item, status_code=status.HTTP_201_CREATED)
 def create_item(payload: ItemCreate) -> Item:
     item = Item(id=_next(), name=payload.name, description=payload.description)
     _items.append(item)
     return item
 
+
 @router.get("/", response_model=List[Item])
 def list_items() -> List[Item]:
     return _items
+
 
 @router.get("/{item_id}", response_model=Item)
 def get_item(item_id: int = Path(..., ge=1)) -> Item:

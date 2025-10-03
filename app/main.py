@@ -19,9 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/health", tags=["health"])
 def health() -> dict:
     return {"status": "ok"}
+
 
 @app.get("/", tags=["meta"])
 def root() -> dict:
@@ -32,6 +34,7 @@ def root() -> dict:
         "docs": "/docs",
         "redoc": "/redoc",
     }
+
 
 # Mount item routes explicitly via module.attribute
 app.include_router(item_router_module.router)

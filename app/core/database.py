@@ -9,7 +9,7 @@ settings = get_settings()
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,  # helps avoid stale connections
-    future=True,         # SQLAlchemy 2.x style
+    future=True,  # SQLAlchemy 2.x style
 )
 
 # Session factory
@@ -22,6 +22,7 @@ SessionLocal = sessionmaker(
 
 # Base class for ORM models
 Base = declarative_base()
+
 
 def get_db() -> Generator:
     """
