@@ -1,14 +1,17 @@
-"""SQLAlchemy ORM models for the Items domain.
+from sqlalchemy import Integer, String
+from sqlalchemy.orm import Mapped, mapped_column
 
-Note: The in-memory API currently does not persist to the database. This module
-exists to show where real ORM models would live.
-"""
-# You can add a SQLAlchemy model later, e.g.:
-# from sqlalchemy import Column, Integer, String
-# from app.core.database import Base
-#
-# class ItemORM(Base):
-#     __tablename__ = "items"
-#     id = Column(Integer, primary_key=True, index=True)
-#     name = Column(String, nullable=False)
-#     description = Column(String, nullable=False)
+from app.core.database import Base
+
+
+class Item(Base):
+    """SQLAlchemy ORM model for items."""
+
+    __tablename__ = "items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(String(1024), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"Item(id={self.id!r}, name={self.name!r})"
