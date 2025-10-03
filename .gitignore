@@ -1,0 +1,59 @@
+# --- macOS ---
+.DS_Store
+
+# --- Python bytecode / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Python versions & virtualenvs ---
+.python-version
+.venv/
+venv/
+env/
+
+# --- Packaging / distribution ---
+build/
+dist/
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+
+# --- Testing / coverage / static analysis ---
+.pytest_cache/
+.coverage
+.coverage.*
+.cache/
+nosetests.xml
+coverage.xml
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+.pyre/
+.ruff_cache/
+
+# --- Logs ---
+*.log
+logs/
+
+# --- Editors / IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Environment & secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Docker (local-only overrides) ---
+docker-compose.override.yml
+
+# --- Optional: Node (if you add a tiny UI/docs dev server) ---
+node_modules/
+
+# --- Misc ---
+*.sqlite3
