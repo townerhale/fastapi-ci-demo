@@ -27,7 +27,7 @@ jobs:
           command: |
             mkdir -p .circleci
             # Write the continued config that contains our one job & workflow.
-            cat > .circleci/continued.yml <<'YAML'
+            cat > .circleci/continued.yml \<<'YAML'
             version: 2.1
 
             jobs:
