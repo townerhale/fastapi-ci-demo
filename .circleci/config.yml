@@ -238,24 +238,43 @@ jobs:
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Workflow (with branch filters + manual approval)
+# ---------------------------------------------------------------------------
 workflows:
   build-and-test:
     jobs:
+      # Run on all branches
       - lint-and-unit-test
       - integration-test:
           requires:
             - lint-and-unit-test
 
-      # Build -> Scan -> Push only after integration tests pass
+      # Build → Scan → Push: only on main
       - build-scan-and-push-image:
           requires:
             - integration-test
           context:
             - aws-config
+          filters:
+            branches:
+              only: main
 
-      # NEW: Create and upload deployment manifest after image is pushed
-      - deploy-manifest:
+      # Manual gate after image push: only on main
+      - hold-for-approval:
+          type: approval
           requires:
             - build-scan-and-push-image
+          filters:
+            branches:
+              only: main
+
+      # Deploy manifest after approval: only on main
+      - deploy-manifest:
+          requires:
+            - hold-for-approval
           context:
             - aws-config
+          filters:
+            branches:
+              only: main
