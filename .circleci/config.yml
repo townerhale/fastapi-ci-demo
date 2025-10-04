@@ -3,11 +3,11 @@ version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.0
+  aws-ecr: circleci/aws-ecr@9.3.5
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Lint and unit tests (fast, no DB)
+  # 1) Lint and unit tests (unchanged)
   # ---------------------------------------------------------------------------
   lint-and-unit-test:
     docker:
@@ -42,7 +42,7 @@ jobs:
           when: always
 
   # ---------------------------------------------------------------------------
-  # 2) Integration tests (with Postgres sidecar)
+  # 2) Integration tests (unchanged)
   # ---------------------------------------------------------------------------
   integration-test:
     docker:
@@ -82,8 +82,7 @@ jobs:
             ./scripts/wait_for_db.sh
       - run:
           name: Run Alembic migrations
-          command: |
-            alembic upgrade head
+          command: alembic upgrade head
       - run:
           name: Run integration tests with JUnit XML + HTML coverage
           command: |
@@ -98,8 +97,36 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
+  # ---------------------------------------------------------------------------
+  # 3) Retag + push 'latest' without rebuilding
+  #    (uses OIDC via aws-cli/setup + remote Docker)
+  # ---------------------------------------------------------------------------
+  retag-and-push-latest:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - aws-cli/setup:
+          profile_name: default
+          role_arn: ${AWS_ROLE_ARN}
+          role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
+          region: ${AWS_REGION}
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Login to ECR
+          command: |
+            aws ecr get-login-password --region "$AWS_REGION" | \
+              docker login --username AWS --password-stdin "$AWS_ECR_ACCOUNT_URL"
+      - run:
+          name: Pull SHA tag, retag as latest, push
+          command: |
+            IMAGE="$AWS_ECR_ACCOUNT_URL/$ECR_REPOSITORY_NAME"
+            docker pull "${IMAGE}:${CIRCLE_SHA1}"
+            docker tag "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
+            docker push "${IMAGE}:latest"
+
 # ---------------------------------------------------------------------------
-# Workflow: run lint/unit first, then integration tests, then ECR push
+# Workflow: run lint/unit -> integration -> build/push SHA -> retag 'latest'
 # ---------------------------------------------------------------------------
 workflows:
   build-and-test:
@@ -109,24 +136,25 @@ workflows:
           requires:
             - lint-and-unit-test
 
-      # Use the AWS ECR ORB **JOB** (not a command)
+      # Build & push SHA tag using the orb **job** (note: no 'account-url' or 'tag-latest' here)
       - aws-ecr/build_and_push_image:
           name: build-and-push-image
-          context: aws-config
           requires:
             - integration-test
-          # OIDC auth using aws-cli orb (recommended by orb docs)
+          context:
+            - aws-config
+          repo: ${ECR_REPOSITORY_NAME}
+          tag: ${CIRCLE_SHA1}
           auth:
             - aws-cli/setup:
                 profile_name: default
-                role_arn: "${AWS_ROLE_ARN}"
-                role_session_name: "circleci-ecr"
-                region: "${AWS_REGION}"
-          # Build & push settings
-          repo: "${ECR_REPOSITORY_NAME}"
-          account-url: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          region: "${AWS_REGION}"
-          dockerfile: "Dockerfile"
-          path: "."
-          tag: "${CIRCLE_SHA1}"
-          tag-latest: true
+                role_arn: ${AWS_ROLE_ARN}
+                role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
+                region: ${AWS_REGION}
+
+      # Retag the already-pushed image as 'latest' (no rebuild)
+      - retag-and-push-latest:
+          requires:
+            - build-and-push-image
+          context:
+            - aws-config
