@@ -116,24 +116,15 @@ jobs:
           name: Debug OIDC claims (remove after verifying)
           command: |
             set -eo pipefail
-            export TOKEN="$(circleci run oidc get --claims "{\"aud\":\"${CIRCLE_ORGANIZATION_ID}\"}")"
-            python - <<'PY'
-            import os, json, base64, sys
-            tok = os.environ.get("TOKEN", "").strip()
-            if not tok:
-                print("No token minted"); sys.exit(1)
-            try:
-                hdr,pay,_ = tok.split(".")
-                def dec(b): 
-                    b += "=" * (-len(b) % 4)
-                    return json.loads(base64.urlsafe_b64decode(b.encode()))
-                print("== OIDC header ==")
-                print(json.dumps(dec(hdr), indent=2))
-                print("== OIDC payload ==")
-                print(json.dumps(dec(pay), indent=2))
-            except Exception as e:
-                print("Failed to decode JWT:", e); sys.exit(1)
-            PY
+            TOKEN="$(circleci run oidc get --claims "{\"aud\":\"${CIRCLE_ORGANIZATION_ID}\"}")"
+            echo "Minted OIDC token (first 20 chars): ${TOKEN:0:20}…"
+            python -c 'import os, json, base64
+t=os.environ["TOKEN"].split(".")
+fix=lambda s:s+"="*(-len(s)%4)
+print("== OIDC header ==")
+print(json.dumps(json.loads(base64.urlsafe_b64decode(fix(t[0]))), indent=2))
+print("== OIDC payload ==")
+print(json.dumps(json.loads(base64.urlsafe_b64decode(fix(t[1]))), indent=2))'
 
       - setup_remote_docker:
           docker_layer_caching: true
@@ -172,30 +163,21 @@ workflows:
             - integration-test
           context:
             - aws-config
-          # 👇 Pre-step to print OIDC claims (temporary)
+          # 👇 Pre-step to print OIDC claims (temporary, no heredoc)
           pre-steps:
             - run:
                 name: Debug OIDC claims (remove after verifying)
                 command: |
                   set -eo pipefail
-                  export TOKEN="$(circleci run oidc get --claims "{\"aud\":\"${CIRCLE_ORGANIZATION_ID}\"}")"
-                  python - <<'PY'
-                  import os, json, base64, sys
-                  tok = os.environ.get("TOKEN","").strip()
-                  if not tok:
-                      print("No token minted"); sys.exit(1)
-                  try:
-                      hdr,pay,_ = tok.split(".")
-                      def dec(b):
-                          b += "=" * (-len(b) % 4)
-                          return json.loads(base64.urlsafe_b64decode(b.encode()))
-                      print("== OIDC header ==")
-                      print(json.dumps(dec(hdr), indent=2))
-                      print("== OIDC payload ==")
-                      print(json.dumps(dec(pay), indent=2))
-                  except Exception as e:
-                      print("Failed to decode JWT:", e); sys.exit(1)
-                  PY
+                  TOKEN="$(circleci run oidc get --claims "{\"aud\":\"${CIRCLE_ORGANIZATION_ID}\"}")"
+                  echo "Minted OIDC token (first 20 chars): ${TOKEN:0:20}…"
+                  python -c 'import os, json, base64
+t=os.environ["TOKEN"].split(".")
+fix=lambda s:s+"="*(-len(s)%4)
+print("== OIDC header ==")
+print(json.dumps(json.loads(base64.urlsafe_b64decode(fix(t[0]))), indent=2))
+print("== OIDC payload ==")
+print(json.dumps(json.loads(base64.urlsafe_b64decode(fix(t[1]))), indent=2))'
           repo: ${ECR_REPOSITORY_NAME}
           tag: ${CIRCLE_SHA1}
           auth:
