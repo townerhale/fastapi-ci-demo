@@ -138,28 +138,39 @@ jobs:
 
       # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
-          name: Generate Trivy reports (JSON) and SBOM (CycloneDX)
+          name: Generate Trivy reports (JSON + CycloneDX) and copy back from remote Docker
           command: |
             set -euo pipefail
-            mkdir -p reports
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
-            # JSON vulnerabilities report
+
+            # Create a scratch container that owns a writable volume at /trivy
+            docker create --name trivy-out -v /trivy alpine:3.19 sh -c "sleep 600"
+
+            # JSON vulnerabilities report (cache DB in a named volume for speed)
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/reports:/reports" \
+              --volumes-from trivy-out \
+              -v trivy-cache:/root/.cache/ \
               aquasec/trivy:latest image \
               --no-progress --ignore-unfixed=false \
-              --format json --output /reports/trivy-vulns.json \
+              --format json --output /trivy/trivy-vulns.json \
               "$IMAGE"
-            # CycloneDX SBOM
+
+            # CycloneDX SBOM (explicitly include vuln scanner so Trivy doesn't skip it)
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              -v "$PWD/reports:/reports" \
+              --volumes-from trivy-out \
+              -v trivy-cache:/root/.cache/ \
               aquasec/trivy:latest image \
-              --no-progress \
-              --format cyclonedx --output /reports/sbom.cdx.json \
+              --no-progress --scanners vuln,license \
+              --format cyclonedx --output /trivy/sbom.cdx.json \
               "$IMAGE"
+
+            # Pull reports from the remote Docker VM to the primary container
+            rm -rf reports && mkdir -p reports
+            docker cp trivy-out:/trivy/. ./reports/
+            docker rm -f trivy-out
 
       # Login then push both tags (only runs if the scan passed)
       - run:
