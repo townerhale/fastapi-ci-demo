@@ -112,70 +112,72 @@ jobs:
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
 
-      # Remote Docker (with DLC) for build + Trivy access to docker.sock
+      # Build and scan need Docker; enable DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
 
       - checkout
 
-      # Prepare image refs & env for orb commands and reports
+      # Compute image refs and ensure ECR account URL is available
       - run:
-          name: Set image variables
+          name: Prepare image variables
           command: |
             mkdir -p reports
-            echo "export AWS_ECR_ACCOUNT_URL=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "$BASH_ENV"
-            echo "export IMAGE=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}" >> "$BASH_ENV"
+            # Keep existing value if it's already set in the context
+            : "${AWS_ECR_ACCOUNT_URL:=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
+            echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL}" >> "$BASH_ENV"
+            echo "export IMAGE=${AWS_ECR_ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}" >> "$BASH_ENV"
+            echo "export SCAN_IMAGE=scan:${CIRCLE_SHA1}" >> "$BASH_ENV"
             source "$BASH_ENV"
             echo "IMAGE=$IMAGE"
-            echo "AWS_ECR_ACCOUNT_URL=$AWS_ECR_ACCOUNT_URL"
+            echo "SCAN_IMAGE=$SCAN_IMAGE"
 
-      # Build the image (tag with commit SHA)
-      - aws-ecr/build-image:
-          repo: ${ECR_REPOSITORY_NAME}
-          tag: ${CIRCLE_SHA1}
-          dockerfile: ./Dockerfile
-          path: .
+      # Build the image and create a local alias used by Trivy orb
+      - run:
+          name: Build Docker image (tag with SHA + local scan tag)
+          command: |
+            source "$BASH_ENV"
+            docker build -f ./Dockerfile -t "${IMAGE}" .
+            docker tag "${IMAGE}" "${SCAN_IMAGE}"
 
-      # Gate: fail the job if any CRITICAL vulnerabilities are found
+      # Fail the job if any CRITICAL vulns are found
+      # (use the local tag so the orb doesn't need env-var expansion)
       - trivy/validate:
-          image: ${IMAGE}
+          image: scan:${CIRCLE_SHA1}
           severity: CRITICAL
           ignore-unfixed: 'yes'
           exit-code: 1
           cve-ignore-list: ""
 
-      # Create human-readable report + CycloneDX SBOM (do not fail here)
+      # Create human-readable report + CycloneDX SBOM (saved to ./reports)
       - run:
           name: Write Trivy report + SBOM (CycloneDX)
           command: |
-            # Text report
+            source "$BASH_ENV"
+            # Text/table report
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /home/circleci/.cache:/root/.cache \
               aquasec/trivy image --no-progress \
               --severity CRITICAL \
               --ignore-unfixed=true \
-              --format table "${IMAGE}" > reports/trivy-vulnerabilities.txt || true
+              --format table "${SCAN_IMAGE}" > reports/trivy-vulnerabilities.txt || true
 
             # CycloneDX SBOM
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               -v /home/circleci/.cache:/root/.cache \
+              -v "$PWD/reports":/reports \
               aquasec/trivy image --no-progress \
               --format cyclonedx \
-              --output /tmp/sbom.cdx.json \
-              "${IMAGE}"
-            docker cp $(docker create scratch):/ < /dev/null >/dev/null 2>&1 || true  # noop to keep shell happy
-            # Move file out of the container-less path; the previous command writes on host via -v
-            mv /tmp/sbom.cdx.json reports/sbom.cdx.json
+              --output /reports/sbom.cdx.json \
+              "${SCAN_IMAGE}"
 
-      # Login & push SHA tag
+      # Push only after scan passed
       - aws-ecr/ecr-login
       - aws-ecr/push-image:
           repo: ${ECR_REPOSITORY_NAME}
           tag: ${CIRCLE_SHA1}
-
-      # Tag and push `latest`
       - run:
           name: Tag image as latest
           command: |
@@ -185,7 +187,7 @@ jobs:
           repo: ${ECR_REPOSITORY_NAME}
           tag: latest
 
-      # Upload scan artifacts
+      # Upload scan outputs
       - store_artifacts:
           path: reports
           destination: reports
