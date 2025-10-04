@@ -3,7 +3,7 @@ version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.5
+  aws-ecr: circleci/aws-ecr@9.3.5  # if this ever complains about params, use 9.3.3
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -110,24 +110,30 @@ jobs:
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
-       - run:
-           name: Debug OIDC claims (remove after verifying)
-           command: |
-             # pretty-print with Python so you don't need jq
-             circleci run oidc get --decode | python -m json.tool 
+
+      # Temporary: inspect OIDC claims; remove after verifying
+      - run:
+          name: Debug OIDC claims (remove after verifying)
+          command: |
+            circleci run oidc get --decode | python -m json.tool
+
       - setup_remote_docker:
           docker_layer_caching: true
+
       - run:
           name: Login to ECR
           command: |
-            aws ecr get-login-password --region "$AWS_REGION" | \
-              docker login --username AWS --password-stdin "$AWS_ECR_ACCOUNT_URL"
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            aws ecr get-login-password --region "${AWS_REGION}" \
+              | docker login --username AWS --password-stdin "${ACCOUNT_URL}"
+
       - run:
           name: Pull SHA tag, retag as latest, push
           command: |
-            IMAGE="$AWS_ECR_ACCOUNT_URL/$ECR_REPOSITORY_NAME"
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
             docker pull "${IMAGE}:${CIRCLE_SHA1}"
-            docker tag "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
+            docker tag  "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
             docker push "${IMAGE}:latest"
 
 # ---------------------------------------------------------------------------
@@ -141,7 +147,7 @@ workflows:
           requires:
             - lint-and-unit-test
 
-      # Build & push SHA tag using the orb **job** (note: no 'account-url' or 'tag-latest' here)
+      # Build & push SHA tag using the orb job
       - aws-ecr/build_and_push_image:
           name: build-and-push-image
           requires:
