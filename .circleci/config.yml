@@ -3,12 +3,12 @@ version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.5
+  aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in this job
   trivy: skedulo/trivy@0.10.0
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Lint and unit tests (fast, no DB)
+  # 1) Lint and unit tests (unchanged)
   # ---------------------------------------------------------------------------
   lint-and-unit-test:
     docker:
@@ -43,7 +43,7 @@ jobs:
           when: always
 
   # ---------------------------------------------------------------------------
-  # 2) Integration tests (with Postgres sidecar)
+  # 2) Integration tests (unchanged)
   # ---------------------------------------------------------------------------
   integration-test:
     docker:
@@ -99,99 +99,93 @@ jobs:
           destination: coverage_html
 
   # ---------------------------------------------------------------------------
-  # 3) Build → Scan (fail on CRITICAL) + SBOM → Push (SHA + latest)
+  # 3) Build -> Scan (fail on CRITICAL) -> Push (SHA + latest)
   # ---------------------------------------------------------------------------
   build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
     steps:
-      # Assume AWS role via OIDC (reads vars from `aws-config` context)
+      - checkout
+
+      # Assume the AWS role via OIDC
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
 
-      # Build/scan/push need Docker; enable DLC for speed
+      # Remote Docker with DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
 
-      - checkout
-
-      # Compute image refs and ensure ECR account URL is available
+      # Build the image locally with the SHA tag
       - run:
-          name: Prepare image variables
+          name: Build Docker image (SHA tag)
           command: |
-            mkdir -p reports
-            : "${AWS_ECR_ACCOUNT_URL:=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
-            echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL}" >> "$BASH_ENV"
-            echo "export IMAGE=${AWS_ECR_ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}" >> "$BASH_ENV"
-            echo "export SCAN_IMAGE=scan:${CIRCLE_SHA1}" >> "$BASH_ENV"
-            source "$BASH_ENV"
-            echo "IMAGE=$IMAGE"
-            echo "SCAN_IMAGE=$SCAN_IMAGE"
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
+            echo "Building ${IMAGE}:${CIRCLE_SHA1}"
+            docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
 
-      # Build the image and add a local tag for Trivy
-      - run:
-          name: Build Docker image (tag with SHA + local scan tag)
-          command: |
-            source "$BASH_ENV"
-            docker build -f ./Dockerfile -t "${IMAGE}" .
-            docker tag "${IMAGE}" "${SCAN_IMAGE}"
-
-      # Fail the job if any CRITICAL vulns are found
+      # Security scan: fail the job on any CRITICAL findings
       - trivy/validate:
-          image: scan:${CIRCLE_SHA1}
+          image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
           severity: CRITICAL
-          ignore-unfixed: true
+          ignore-unfixed: false
           exit-code: 1
           cve-ignore-list: ""
 
-      # Write human-readable report + CycloneDX SBOM
+      # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
-          name: Write Trivy report + SBOM (CycloneDX)
+          name: Generate Trivy reports (JSON) and SBOM (CycloneDX)
           command: |
-            source "$BASH_ENV"
-            # Text/table report
+            set -euo pipefail
+            mkdir -p reports
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
+            # JSON vulnerabilities report
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              -v /home/circleci/.cache:/root/.cache \
-              aquasec/trivy image --no-progress \
-              --severity CRITICAL \
-              --ignore-unfixed=true \
-              --format table "${SCAN_IMAGE}" > reports/trivy-vulnerabilities.txt || true
-
+              -v "$PWD/reports:/reports" \
+              aquasec/trivy:latest image \
+              --no-progress --ignore-unfixed=false \
+              --format json --output /reports/trivy-vulns.json \
+              "$IMAGE"
             # CycloneDX SBOM
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
-              -v /home/circleci/.cache:/root/.cache \
-              -v "$PWD/reports":/reports \
-              aquasec/trivy image --no-progress \
-              --format cyclonedx \
-              --output /reports/sbom.cdx.json \
-              "${SCAN_IMAGE}"
+              -v "$PWD/reports:/reports" \
+              aquasec/trivy:latest image \
+              --no-progress \
+              --format cyclonedx --output /reports/sbom.cdx.json \
+              "$IMAGE"
 
-      # Push only after scan passed
-      - aws-ecr/ecr-login
-      - aws-ecr/push-image:
-          repo: ${ECR_REPOSITORY_NAME}
-          tag: ${CIRCLE_SHA1}
+      # Login then push both tags (only runs if the scan passed)
       - run:
-          name: Tag image as latest
+          name: Log in to ECR
           command: |
-            source "$BASH_ENV"
-            docker tag "${IMAGE}" "${AWS_ECR_ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:latest"
-      - aws-ecr/push-image:
-          repo: ${ECR_REPOSITORY_NAME}
-          tag: latest
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            aws ecr get-login-password --region "${AWS_REGION}" \
+              | docker login --username AWS --password-stdin "${ACCOUNT_URL}"
 
-      # Upload scan outputs
+      - run:
+          name: Tag and push (SHA and latest)
+          command: |
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
+            docker tag "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
+            docker push "${IMAGE}:${CIRCLE_SHA1}"
+            docker push "${IMAGE}:latest"
+
       - store_artifacts:
           path: reports
           destination: reports
 
 # ---------------------------------------------------------------------------
-# Workflow: lint/unit -> integration -> build + scan + push
+# Workflow
 # ---------------------------------------------------------------------------
 workflows:
   build-and-test:
@@ -200,6 +194,8 @@ workflows:
       - integration-test:
           requires:
             - lint-and-unit-test
+
+      # Build -> Scan -> Push only after integration tests pass
       - build-scan-and-push-image:
           requires:
             - integration-test
