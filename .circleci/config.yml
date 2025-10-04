@@ -3,11 +3,12 @@ version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.5  # if this ever complains about params, use 9.3.3
+  aws-ecr: circleci/aws-ecr@9.3.5
+  trivy: skedulo/trivy@0.10.0
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Lint and unit tests
+  # 1) Lint and unit tests (fast, no DB)
   # ---------------------------------------------------------------------------
   lint-and-unit-test:
     docker:
@@ -42,7 +43,7 @@ jobs:
           when: always
 
   # ---------------------------------------------------------------------------
-  # 2) Integration tests (Postgres sidecar)
+  # 2) Integration tests (with Postgres sidecar)
   # ---------------------------------------------------------------------------
   integration-test:
     docker:
@@ -98,36 +99,99 @@ jobs:
           destination: coverage_html
 
   # ---------------------------------------------------------------------------
-  # 3) Retag + push 'latest' without rebuilding
+  # 3) Build → Scan (fail on CRITICAL) + SBOM → Push (SHA + latest)
   # ---------------------------------------------------------------------------
-  retag-and-push-latest:
+  build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
     steps:
+      # Assume AWS role via OIDC (reads vars from `aws-config` context)
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
+
+      # Remote Docker (with DLC) for build + Trivy access to docker.sock
       - setup_remote_docker:
           docker_layer_caching: true
+
+      - checkout
+
+      # Prepare image refs & env for orb commands and reports
       - run:
-          name: Login to ECR
+          name: Set image variables
           command: |
-            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-            aws ecr get-login-password --region "${AWS_REGION}" \
-              | docker login --username AWS --password-stdin "${ACCOUNT_URL}"
+            mkdir -p reports
+            echo "export AWS_ECR_ACCOUNT_URL=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "$BASH_ENV"
+            echo "export IMAGE=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}" >> "$BASH_ENV"
+            source "$BASH_ENV"
+            echo "IMAGE=$IMAGE"
+            echo "AWS_ECR_ACCOUNT_URL=$AWS_ECR_ACCOUNT_URL"
+
+      # Build the image (tag with commit SHA)
+      - aws-ecr/build-image:
+          repo: ${ECR_REPOSITORY_NAME}
+          tag: ${CIRCLE_SHA1}
+          dockerfile: ./Dockerfile
+          path: .
+
+      # Gate: fail the job if any CRITICAL vulnerabilities are found
+      - trivy/validate:
+          image: ${IMAGE}
+          severity: CRITICAL
+          ignore-unfixed: 'yes'
+          exit-code: 1
+          cve-ignore-list: ""
+
+      # Create human-readable report + CycloneDX SBOM (do not fail here)
       - run:
-          name: Pull SHA tag, retag as latest, push
+          name: Write Trivy report + SBOM (CycloneDX)
           command: |
-            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
-            docker pull "${IMAGE}:${CIRCLE_SHA1}"
-            docker tag  "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
-            docker push "${IMAGE}:latest"
+            # Text report
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /home/circleci/.cache:/root/.cache \
+              aquasec/trivy image --no-progress \
+              --severity CRITICAL \
+              --ignore-unfixed=true \
+              --format table "${IMAGE}" > reports/trivy-vulnerabilities.txt || true
+
+            # CycloneDX SBOM
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v /home/circleci/.cache:/root/.cache \
+              aquasec/trivy image --no-progress \
+              --format cyclonedx \
+              --output /tmp/sbom.cdx.json \
+              "${IMAGE}"
+            docker cp $(docker create scratch):/ < /dev/null >/dev/null 2>&1 || true  # noop to keep shell happy
+            # Move file out of the container-less path; the previous command writes on host via -v
+            mv /tmp/sbom.cdx.json reports/sbom.cdx.json
+
+      # Login & push SHA tag
+      - aws-ecr/ecr-login
+      - aws-ecr/push-image:
+          repo: ${ECR_REPOSITORY_NAME}
+          tag: ${CIRCLE_SHA1}
+
+      # Tag and push `latest`
+      - run:
+          name: Tag image as latest
+          command: |
+            source "$BASH_ENV"
+            docker tag "${IMAGE}" "${AWS_ECR_ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:latest"
+      - aws-ecr/push-image:
+          repo: ${ECR_REPOSITORY_NAME}
+          tag: latest
+
+      # Upload scan artifacts
+      - store_artifacts:
+          path: reports
+          destination: reports
 
 # ---------------------------------------------------------------------------
-# Workflow
+# Workflow: lint/unit -> integration -> build + scan + push
 # ---------------------------------------------------------------------------
 workflows:
   build-and-test:
@@ -136,26 +200,8 @@ workflows:
       - integration-test:
           requires:
             - lint-and-unit-test
-
-      # Build & push SHA tag using the orb job (after integration-test)
-      - aws-ecr/build_and_push_image:
-          name: build-and-push-image
+      - build-scan-and-push-image:
           requires:
             - integration-test
-          context:
-            - aws-config
-          repo: ${ECR_REPOSITORY_NAME}
-          tag: ${CIRCLE_SHA1}
-          auth:
-            - aws-cli/setup:
-                profile_name: default
-                role_arn: ${AWS_ROLE_ARN}
-                role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
-                region: ${AWS_REGION}
-
-      # Retag the already-pushed image as 'latest' (no rebuild)
-      - retag-and-push-latest:
-          requires:
-            - build-and-push-image
           context:
             - aws-config
