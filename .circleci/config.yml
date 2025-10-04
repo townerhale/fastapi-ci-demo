@@ -7,7 +7,7 @@ orbs:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) Lint and unit tests (unchanged)
+  # 1) Lint and unit tests
   # ---------------------------------------------------------------------------
   lint-and-unit-test:
     docker:
@@ -42,7 +42,7 @@ jobs:
           when: always
 
   # ---------------------------------------------------------------------------
-  # 2) Integration tests (unchanged)
+  # 2) Integration tests (Postgres sidecar)
   # ---------------------------------------------------------------------------
   integration-test:
     docker:
@@ -98,43 +98,7 @@ jobs:
           destination: coverage_html
 
   # ---------------------------------------------------------------------------
-  # 3) OIDC smoke test (safe, no heredocs). Runs before the push job.
-  # ---------------------------------------------------------------------------
-  aws-oidc-smoke-test:
-    docker:
-      - image: cimg/base:stable
-    steps:
-      - aws-cli/setup:
-          profile_name: default
-          role_arn: ${AWS_ROLE_ARN}
-          role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
-          region: ${AWS_REGION}
-      - run:
-          name: Verify we assumed the role
-          command: |
-            set -euo pipefail
-            echo "Region: ${AWS_REGION}"
-            echo "Role ARN: ${AWS_ROLE_ARN}"
-            aws sts get-caller-identity
-      - run:
-          name: Show OIDC claims (no heredocs)
-          command: |
-            set -euo pipefail
-            TOKEN="$(circleci run oidc get --claims "{\"aud\":\"${CIRCLE_ORGANIZATION_ID}\"}")"
-            b64url() {
-              in="$1"
-              pad=$((4 - ${#in} % 4))
-              if [ $pad -lt 4 ]; then in="$in$(printf '=%.0s' $(seq 1 $pad))"; fi
-              printf '%s' "$in" | tr '_-' '/+' | base64 -d 2>/dev/null
-            }
-            HEADER="$(b64url "$(printf '%s' "$TOKEN" | cut -d. -f1)")"
-            PAYLOAD="$(b64url "$(printf '%s' "$TOKEN" | cut -d. -f2)")"
-            echo "== OIDC header ==";  echo "$HEADER"
-            echo "== OIDC payload =="; echo "$PAYLOAD"
-            echo "Expected project_slug: gh/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
-
-  # ---------------------------------------------------------------------------
-  # 4) Retag + push 'latest' without rebuilding (after push succeeds)
+  # 3) Retag + push 'latest' without rebuilding
   # ---------------------------------------------------------------------------
   retag-and-push-latest:
     docker:
@@ -173,18 +137,11 @@ workflows:
           requires:
             - lint-and-unit-test
 
-      # 🔎 OIDC + role assumption test BEFORE building/pushing
-      - aws-oidc-smoke-test:
-          requires:
-            - integration-test
-          context:
-            - aws-config
-
-      # Build & push SHA tag using the orb job
+      # Build & push SHA tag using the orb job (after integration-test)
       - aws-ecr/build_and_push_image:
           name: build-and-push-image
           requires:
-            - aws-oidc-smoke-test
+            - integration-test
           context:
             - aws-config
           repo: ${ECR_REPOSITORY_NAME}
