@@ -154,6 +154,12 @@ workflows:
             - integration-test
           context:
             - aws-config
+          # 👇 Pre-step to print OIDC claims (temporary)
+          pre-steps:
+            - run:
+                name: Debug OIDC claims (remove after verifying)
+                command: |
+                  circleci run oidc get --decode | python -m json.tool
           repo: ${ECR_REPOSITORY_NAME}
           tag: ${CIRCLE_SHA1}
           auth:
