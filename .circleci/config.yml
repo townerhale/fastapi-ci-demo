@@ -82,8 +82,7 @@ jobs:
             ./scripts/wait_for_db.sh
       - run:
           name: Run Alembic migrations
-          command: |
-            alembic upgrade head
+          command: alembic upgrade head
       - run:
           name: Run integration tests with JUnit XML + HTML coverage
           command: |
@@ -106,7 +105,6 @@ jobs:
       - image: cimg/base:stable
     working_directory: ~/project
     resource_class: medium
-    context: aws-config   # uses AWS_ACCOUNT_ID, AWS_REGION, ECR_REPOSITORY_NAME, AWS_ROLE_ARN
     steps:
       - checkout
 
@@ -114,11 +112,11 @@ jobs:
       - setup_remote_docker:
           docker_layer_caching: true
 
-      # Configure AWS via OIDC using the orb (no aws-region parameter needed)
+      # Configure AWS via OIDC using the orb (region comes from env)
       - aws-cli/setup:
           role-arn: "${AWS_ROLE_ARN}"
 
-      # (Optional) Ensure AWS_DEFAULT_REGION mirrors AWS_REGION for any tooling that expects it
+      # Some tools expect AWS_DEFAULT_REGION, mirror AWS_REGION from context
       - run:
           name: Export AWS_DEFAULT_REGION
           command: echo "export AWS_DEFAULT_REGION=${AWS_REGION}" >> "$BASH_ENV"
@@ -144,3 +142,5 @@ workflows:
       - build-and-push-image:
           requires:
             - integration-test
+          context:
+            - aws-config   # <— apply your context here
