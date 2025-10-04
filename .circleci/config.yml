@@ -1,5 +1,9 @@
-# .circleci/config.yml — lint/unit + integration tests with Postgres sidecar
+# .circleci/config.yml — lint/unit + integration tests + build & push to ECR
 version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@5
+  aws-ecr: circleci/aws-ecr@8
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -126,8 +130,50 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
+  # ---------------------------------------------------------------------------
+  # 3) Build & push Docker image to ECR using OIDC
+  # ---------------------------------------------------------------------------
+  build-and-push-image:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+
+      # Enable remote Docker with layer caching
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+      # Install/configure AWS CLI (region comes from context)
+      - aws-cli/setup:
+          aws-region: "${AWS_REGION}"
+
+      # Configure AWS OIDC: write the CircleCI OIDC token to a file and set envs
+      - run:
+          name: Configure AWS OIDC (assume role)
+          command: |
+            if [ -z "${CIRCLE_OIDC_TOKEN:-}" ]; then
+              echo "CIRCLE_OIDC_TOKEN not present. Ensure OIDC is enabled for this project." >&2
+              exit 1
+            fi
+            umask 077
+            echo -n "${CIRCLE_OIDC_TOKEN}" > /tmp/oidc-token
+            echo 'export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc-token' >> "$BASH_ENV"
+            echo 'export AWS_ROLE_ARN=${AWS_ROLE_ARN}' >> "$BASH_ENV"
+            echo 'export AWS_DEFAULT_REGION=${AWS_REGION}' >> "$BASH_ENV"
+            source "$BASH_ENV"
+            aws sts get-caller-identity
+
+      # Build, tag with SHA and latest, and push to ECR
+      - aws-ecr/build-and-push-image:
+          account-url: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          repo: "${ECR_REPOSITORY_NAME}"
+          region: "${AWS_REGION}"
+          path: .
+          dockerfile: Dockerfile
+          tag: "${CIRCLE_SHA1},latest"
+
 # ---------------------------------------------------------------------------
-# Workflow: run lint/unit first, then integration tests
+# Workflow: run lint/unit first, then integration tests, then build+push
 # ---------------------------------------------------------------------------
 workflows:
   build-and-test:
@@ -136,3 +182,8 @@ workflows:
       - integration-test:
           requires:
             - lint-and-unit-test
+      - build-and-push-image:
+          context:
+            - aws-config
+          requires:
+            - integration-test
