@@ -1,9 +1,9 @@
-# .circleci/config.yml — lint/unit + integration tests + build & push to ECR (OIDC)
+# .circleci/config.yml
 version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9
+  aws-ecr: circleci/aws-ecr@9.3.0
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -82,7 +82,8 @@ jobs:
             ./scripts/wait_for_db.sh
       - run:
           name: Run Alembic migrations
-          command: alembic upgrade head
+          command: |
+            alembic upgrade head
       - run:
           name: Run integration tests with JUnit XML + HTML coverage
           command: |
@@ -97,35 +98,9 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
-  # ---------------------------------------------------------------------------
-  # 3) Build & push Docker image to ECR using OIDC (aws-cli & aws-ecr orbs)
-  # ---------------------------------------------------------------------------
-  build-and-push-image:
-    docker:
-      - image: cimg/base:stable
-    working_directory: ~/project
-    resource_class: medium
-    steps:
-      - checkout
-
-      # Enable Docker engine for building images (with DLC for speed)
-      - setup_remote_docker:
-          docker_layer_caching: true
-
-      #  Correct: underscores for orb params; pass region explicitly
-      - aws-cli/setup:
-          role_arn: "${AWS_ROLE_ARN}"
-          role_session_name: "${CIRCLE_JOB}"
-          region: "${AWS_REGION}"
-
-      # Build, tag (commit SHA + latest), and push to ECR
-      - aws-ecr/build-and-push-image:
-          account-url: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          repo: "${ECR_REPOSITORY_NAME}"
-          region: "${AWS_REGION}"
-          tag: "${CIRCLE_SHA1},latest"
-          create-repo: true
-
+# ---------------------------------------------------------------------------
+# Workflow: run lint/unit first, then integration tests, then ECR push
+# ---------------------------------------------------------------------------
 workflows:
   build-and-test:
     jobs:
@@ -133,8 +108,25 @@ workflows:
       - integration-test:
           requires:
             - lint-and-unit-test
-      - build-and-push-image:
+
+      # Use the AWS ECR ORB **JOB** (not a command)
+      - aws-ecr/build_and_push_image:
+          name: build-and-push-image
+          context: aws-config
           requires:
             - integration-test
-          context:
-            - aws-config
+          # OIDC auth using aws-cli orb (recommended by orb docs)
+          auth:
+            - aws-cli/setup:
+                profile_name: default
+                role_arn: "${AWS_ROLE_ARN}"
+                role_session_name: "circleci-ecr"
+                region: "${AWS_REGION}"
+          # Build & push settings
+          repo: "${ECR_REPOSITORY_NAME}"
+          account-url: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+          region: "${AWS_REGION}"
+          dockerfile: "Dockerfile"
+          path: "."
+          tag: "${CIRCLE_SHA1}"
+          tag-latest: true
