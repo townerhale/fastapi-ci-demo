@@ -111,10 +111,10 @@ jobs:
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
        - run:
-          name: Debug OIDC claims (remove after verifying)
-          command: |
-           # pretty-print with Python so you don't need jq
-            circleci run oidc get --decode | python -m json.tool 
+           name: Debug OIDC claims (remove after verifying)
+           command: |
+             # pretty-print with Python so you don't need jq
+             circleci run oidc get --decode | python -m json.tool 
       - setup_remote_docker:
           docker_layer_caching: true
       - run:
