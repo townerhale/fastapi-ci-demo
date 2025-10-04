@@ -1,7 +1,10 @@
-# .circleci/config.yml — static, single-file pipeline
+# .circleci/config.yml — lint/unit + integration tests with Postgres sidecar
 version: 2.1
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # 1) Lint and unit tests (fast, no DB)
+  # ---------------------------------------------------------------------------
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
@@ -9,11 +12,13 @@ jobs:
     steps:
       - checkout
 
+      # Restore pip cache (keyed by requirements.txt checksum)
       - restore_cache:
           keys:
             - v1-pip-{{ checksum "requirements.txt" }}
             - v1-pip-
 
+      # Install Python deps and the tools we need for this job
       - run:
           name: Install dependencies
           command: |
@@ -21,26 +26,113 @@ jobs:
             pip install -r requirements.txt
             pip install --upgrade black pytest pytest-cov
 
+      # Save pip cache for future jobs
       - save_cache:
           key: v1-pip-{{ checksum "requirements.txt" }}
           paths:
             - ~/.cache/pip
 
+      # Lint with black (non-formatting, fail on diff)
       - run:
           name: Lint (black --check)
           command: black --check .
 
+      # Run only unit tests and emit a JUnit report
       - run:
           name: Run unit tests (tests/unit) with JUnit XML
           command: |
             mkdir -p test-results/unit
             pytest tests/unit -q --junitxml=test-results/unit/pytest.xml
 
+      # Upload unit-test JUnit XML to CircleCI Test Summary
       - store_test_results:
           path: test-results
           when: always
 
+  # ---------------------------------------------------------------------------
+  # 2) Integration tests (with Postgres sidecar)
+  # ---------------------------------------------------------------------------
+  integration-test:
+    docker:
+      # Primary container where tests run
+      - image: cimg/python:3.11
+        environment:
+          # Expose DB URLs to the app/tests
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
+          PIP_CACHE_DIR: ~/.cache/pip
+      # Sidecar Postgres service. Primary container can reach it via localhost:5432
+      - image: postgres:14-alpine
+        environment:
+          POSTGRES_DB: appdb
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+    working_directory: ~/project
+    steps:
+      - checkout
+
+      # Restore pip cache (keyed by requirements.txt checksum)
+      - restore_cache:
+          keys:
+            - v1-pip-{{ checksum "requirements.txt" }}
+            - v1-pip-
+
+      # Install system tools (netcat) and Python deps (includes Alembic/pytest)
+      - run:
+          name: Install system & Python dependencies
+          command: |
+            sudo apk update || sudo apt-get update
+            # netcat-openbsd for 'nc' used by scripts/wait_for_db.sh
+            (sudo apk add netcat-openbsd || sudo apt-get install -y netcat-openbsd) || true
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install --upgrade pytest pytest-cov
+
+      # Save pip cache for future jobs
+      - save_cache:
+          key: v1-pip-{{ checksum "requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+
+      # Wait for the Postgres sidecar to accept connections
+      - run:
+          name: Wait for Postgres to be ready
+          command: |
+            chmod +x scripts/wait_for_db.sh
+            ./scripts/wait_for_db.sh
+
+      # Run Alembic migrations against the sidecar DB
+      - run:
+          name: Run Alembic migrations
+          command: |
+            alembic upgrade head
+
+      # Execute integration tests and generate JUnit + HTML coverage
+      - run:
+          name: Run integration tests with JUnit XML + HTML coverage
+          command: |
+            mkdir -p test-results/integration
+            pytest tests/integration -q \
+              --junitxml=test-results/integration/pytest.xml \
+              --cov=app --cov-report=term --cov-report=html:coverage_html
+
+      # Upload JUnit XML to CircleCI Test Summary
+      - store_test_results:
+          path: test-results
+          when: always
+
+      # Upload HTML coverage as an artifact (browsable in CircleCI)
+      - store_artifacts:
+          path: coverage_html
+          destination: coverage_html
+
+# ---------------------------------------------------------------------------
+# Workflow: run lint/unit first, then integration tests
+# ---------------------------------------------------------------------------
 workflows:
-  build:
+  build-and-test:
     jobs:
       - lint-and-unit-test
+      - integration-test:
+          requires:
+            - lint-and-unit-test
