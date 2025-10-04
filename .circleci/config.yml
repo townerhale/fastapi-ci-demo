@@ -3,7 +3,7 @@ version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in this job
+  aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in these jobs
   trivy: skedulo/trivy@0.10.0
 
 jobs:
@@ -195,6 +195,46 @@ jobs:
           path: reports
           destination: reports
 
+  # ---------------------------------------------------------------------------
+  # 4) NEW: Create and upload deployment manifest to S3
+  # ---------------------------------------------------------------------------
+  deploy-manifest:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+
+      # Assume the AWS role via OIDC
+      - aws-cli/setup:
+          profile_name: default
+          role_arn: ${AWS_ROLE_ARN}
+          role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
+          region: ${AWS_REGION}
+
+      # Generate manifest.json with image URI, git SHA, UTC timestamp, and build number
+      - run:
+          name: Generate manifest.json
+          command: |
+            set -euo pipefail
+            : "${MANIFEST_BUCKET:?MANIFEST_BUCKET is required (add it to the aws-config context)}"
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE_URI="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
+            TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+            printf '{\n  "image_uri": "%s",\n  "git_sha": "%s",\n  "timestamp_utc": "%s",\n  "build_number": "%s"\n}\n' \
+              "$IMAGE_URI" "$CIRCLE_SHA1" "$TS" "$CIRCLE_BUILD_NUM" > manifest.json
+
+            echo "Wrote manifest.json:"
+            cat manifest.json
+
+      # Upload manifest to S3 at manifests/$CIRCLE_SHA1.json
+      - run:
+          name: Upload manifest to S3
+          command: |
+            set -euo pipefail
+            aws s3 cp manifest.json "s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json" --region "${AWS_REGION}"
+            echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
+
 # ---------------------------------------------------------------------------
 # Workflow
 # ---------------------------------------------------------------------------
@@ -210,5 +250,12 @@ workflows:
       - build-scan-and-push-image:
           requires:
             - integration-test
+          context:
+            - aws-config
+
+      # NEW: Create and upload deployment manifest after image is pushed
+      - deploy-manifest:
+          requires:
+            - build-scan-and-push-image
           context:
             - aws-config
