@@ -1,9 +1,9 @@
-# .circleci/config.yml — lint/unit + integration tests + build & push to ECR
+# .circleci/config.yml — lint/unit + integration tests + build & push to ECR (OIDC)
 version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5
-  aws-ecr: circleci/aws-ecr@8
+  aws-ecr: circleci/aws-ecr@9
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -15,40 +15,28 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-
-      # Restore pip cache (keyed by requirements.txt checksum)
       - restore_cache:
           keys:
             - v1-pip-{{ checksum "requirements.txt" }}
             - v1-pip-
-
-      # Install Python deps and the tools we need for this job
       - run:
           name: Install dependencies
           command: |
             python -m pip install --upgrade pip
             pip install -r requirements.txt
             pip install --upgrade black pytest pytest-cov
-
-      # Save pip cache for future jobs
       - save_cache:
           key: v1-pip-{{ checksum "requirements.txt" }}
           paths:
             - ~/.cache/pip
-
-      # Lint with black (non-formatting, fail on diff)
       - run:
           name: Lint (black --check)
           command: black --check .
-
-      # Run only unit tests and emit a JUnit report
       - run:
           name: Run unit tests (tests/unit) with JUnit XML
           command: |
             mkdir -p test-results/unit
             pytest tests/unit -q --junitxml=test-results/unit/pytest.xml
-
-      # Upload unit-test JUnit XML to CircleCI Test Summary
       - store_test_results:
           path: test-results
           when: always
@@ -58,14 +46,11 @@ jobs:
   # ---------------------------------------------------------------------------
   integration-test:
     docker:
-      # Primary container where tests run
       - image: cimg/python:3.11
         environment:
-          # Expose DB URLs to the app/tests
           DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
           TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
           PIP_CACHE_DIR: ~/.cache/pip
-      # Sidecar Postgres service. Primary container can reach it via localhost:5432
       - image: postgres:14-alpine
         environment:
           POSTGRES_DB: appdb
@@ -74,44 +59,31 @@ jobs:
     working_directory: ~/project
     steps:
       - checkout
-
-      # Restore pip cache (keyed by requirements.txt checksum)
       - restore_cache:
           keys:
             - v1-pip-{{ checksum "requirements.txt" }}
             - v1-pip-
-
-      # Install system tools (netcat) and Python deps (includes Alembic/pytest)
       - run:
           name: Install system & Python dependencies
           command: |
             sudo apk update || sudo apt-get update
-            # netcat-openbsd for 'nc' used by scripts/wait_for_db.sh
             (sudo apk add netcat-openbsd || sudo apt-get install -y netcat-openbsd) || true
             python -m pip install --upgrade pip
             pip install -r requirements.txt
             pip install --upgrade pytest pytest-cov
-
-      # Save pip cache for future jobs
       - save_cache:
           key: v1-pip-{{ checksum "requirements.txt" }}
           paths:
             - ~/.cache/pip
-
-      # Wait for the Postgres sidecar to accept connections
       - run:
           name: Wait for Postgres to be ready
           command: |
             chmod +x scripts/wait_for_db.sh
             ./scripts/wait_for_db.sh
-
-      # Run Alembic migrations against the sidecar DB
       - run:
           name: Run Alembic migrations
           command: |
             alembic upgrade head
-
-      # Execute integration tests and generate JUnit + HTML coverage
       - run:
           name: Run integration tests with JUnit XML + HTML coverage
           command: |
@@ -119,61 +91,48 @@ jobs:
             pytest tests/integration -q \
               --junitxml=test-results/integration/pytest.xml \
               --cov=app --cov-report=term --cov-report=html:coverage_html
-
-      # Upload JUnit XML to CircleCI Test Summary
       - store_test_results:
           path: test-results
           when: always
-
-      # Upload HTML coverage as an artifact (browsable in CircleCI)
       - store_artifacts:
           path: coverage_html
           destination: coverage_html
 
   # ---------------------------------------------------------------------------
-  # 3) Build & push Docker image to ECR using OIDC
+  # 3) Build & push Docker image to ECR using OIDC (aws-cli & aws-ecr orbs)
   # ---------------------------------------------------------------------------
   build-and-push-image:
     docker:
       - image: cimg/base:stable
+    working_directory: ~/project
+    resource_class: medium
+    context: aws-config   # uses AWS_ACCOUNT_ID, AWS_REGION, ECR_REPOSITORY_NAME, AWS_ROLE_ARN
     steps:
       - checkout
 
-      # Enable remote Docker with layer caching
+      # Enable Docker engine for building images (with DLC for speed)
       - setup_remote_docker:
           docker_layer_caching: true
 
-      # Install/configure AWS CLI (region comes from context)
+      # Configure AWS via OIDC using the orb (no aws-region parameter needed)
       - aws-cli/setup:
-          aws-region: "${AWS_REGION}"
+          role-arn: "${AWS_ROLE_ARN}"
 
-      # Configure AWS OIDC: write the CircleCI OIDC token to a file and set envs
+      # (Optional) Ensure AWS_DEFAULT_REGION mirrors AWS_REGION for any tooling that expects it
       - run:
-          name: Configure AWS OIDC (assume role)
-          command: |
-            if [ -z "${CIRCLE_OIDC_TOKEN:-}" ]; then
-              echo "CIRCLE_OIDC_TOKEN not present. Ensure OIDC is enabled for this project." >&2
-              exit 1
-            fi
-            umask 077
-            echo -n "${CIRCLE_OIDC_TOKEN}" > /tmp/oidc-token
-            echo 'export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc-token' >> "$BASH_ENV"
-            echo 'export AWS_ROLE_ARN=${AWS_ROLE_ARN}' >> "$BASH_ENV"
-            echo 'export AWS_DEFAULT_REGION=${AWS_REGION}' >> "$BASH_ENV"
-            source "$BASH_ENV"
-            aws sts get-caller-identity
+          name: Export AWS_DEFAULT_REGION
+          command: echo "export AWS_DEFAULT_REGION=${AWS_REGION}" >> "$BASH_ENV"
 
-      # Build, tag with SHA and latest, and push to ECR
+      # Build, tag (commit SHA + latest), and push to ECR
       - aws-ecr/build-and-push-image:
           account-url: "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           repo: "${ECR_REPOSITORY_NAME}"
           region: "${AWS_REGION}"
-          path: .
-          dockerfile: Dockerfile
           tag: "${CIRCLE_SHA1},latest"
+          create-repo: true
 
 # ---------------------------------------------------------------------------
-# Workflow: run lint/unit first, then integration tests, then build+push
+# Workflow: run lint/unit first, then integration tests, then build & push
 # ---------------------------------------------------------------------------
 workflows:
   build-and-test:
@@ -183,7 +142,5 @@ workflows:
           requires:
             - lint-and-unit-test
       - build-and-push-image:
-          context:
-            - aws-config
           requires:
             - integration-test
