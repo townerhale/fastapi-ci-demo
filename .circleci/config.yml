@@ -2,7 +2,7 @@
 version: 2.1
 
 orbs:
-  aws-cli: circleci/aws-cli@5
+  aws-cli: circleci/aws-cli@5.4.1
   aws-ecr: circleci/aws-ecr@9
 
 jobs:
@@ -112,14 +112,11 @@ jobs:
       - setup_remote_docker:
           docker_layer_caching: true
 
-      # Configure AWS via OIDC using the orb (region comes from env)
+      #  Correct: underscores for orb params; pass region explicitly
       - aws-cli/setup:
-          role-arn: "${AWS_ROLE_ARN}"
-
-      # Some tools expect AWS_DEFAULT_REGION, mirror AWS_REGION from context
-      - run:
-          name: Export AWS_DEFAULT_REGION
-          command: echo "export AWS_DEFAULT_REGION=${AWS_REGION}" >> "$BASH_ENV"
+          role_arn: "${AWS_ROLE_ARN}"
+          role_session_name: "${CIRCLE_JOB}"
+          region: "${AWS_REGION}"
 
       # Build, tag (commit SHA + latest), and push to ECR
       - aws-ecr/build-and-push-image:
@@ -129,9 +126,6 @@ jobs:
           tag: "${CIRCLE_SHA1},latest"
           create-repo: true
 
-# ---------------------------------------------------------------------------
-# Workflow: run lint/unit first, then integration tests, then build & push
-# ---------------------------------------------------------------------------
 workflows:
   build-and-test:
     jobs:
@@ -143,4 +137,4 @@ workflows:
           requires:
             - integration-test
           context:
-            - aws-config   # <— apply your context here
+            - aws-config
