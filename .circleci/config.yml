@@ -1,15 +1,29 @@
 # .circleci/config.yml
 version: 2.1
+setup: true  # enable dynamic config so path-filtering can set pipeline params
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
   aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in these jobs
   trivy: skedulo/trivy@0.10.0
+  path-filtering: circleci/path-filtering@1.0.0
 
+# ---------------------------------------------------------------------------
+# Pipeline parameters (set by path-filtering). Defaults = skip.
+# ---------------------------------------------------------------------------
+parameters:
+  run-tests:
+    type: boolean
+    default: false
+  run-build-deploy:
+    type: boolean
+    default: false
+
+# ---------------------------------------------------------------------------
+# JOBS (unchanged from your latest config, except names/comments)
+# ---------------------------------------------------------------------------
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1) Lint and unit tests (unchanged)
-  # ---------------------------------------------------------------------------
+  # 1) Lint and unit tests (fast, no DB)
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
@@ -42,9 +56,7 @@ jobs:
           path: test-results
           when: always
 
-  # ---------------------------------------------------------------------------
-  # 2) Integration tests (unchanged)
-  # ---------------------------------------------------------------------------
+  # 2) Integration tests (with Postgres sidecar)
   integration-test:
     docker:
       - image: cimg/python:3.11
@@ -98,26 +110,21 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
-  # ---------------------------------------------------------------------------
   # 3) Build -> Scan (fail on CRITICAL) -> Push (SHA + latest)
-  # ---------------------------------------------------------------------------
   build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
     steps:
       - checkout
-
       # Assume the AWS role via OIDC
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
-
       # Remote Docker with DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
-
       # Build the image locally with the SHA tag
       - run:
           name: Build Docker image (SHA tag)
@@ -127,7 +134,6 @@ jobs:
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
             echo "Building ${IMAGE}:${CIRCLE_SHA1}"
             docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
-
       # Security scan: fail the job on any CRITICAL findings
       - trivy/validate:
           image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
@@ -135,7 +141,6 @@ jobs:
           ignore-unfixed: false
           exit-code: 1
           cve-ignore-list: ""
-
       # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
           name: Generate Trivy reports (JSON + CycloneDX) and copy back from remote Docker
@@ -144,10 +149,8 @@ jobs:
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
 
-            # Create a scratch container that owns a writable volume at /trivy
             docker create --name trivy-out -v /trivy alpine:3.19 sh -c "sleep 600"
 
-            # JSON vulnerabilities report (cache DB in a named volume for speed)
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               --volumes-from trivy-out \
@@ -157,7 +160,6 @@ jobs:
               --format json --output /trivy/trivy-vulns.json \
               "$IMAGE"
 
-            # CycloneDX SBOM (explicitly include vuln scanner so Trivy doesn't skip it)
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               --volumes-from trivy-out \
@@ -167,7 +169,6 @@ jobs:
               --format cyclonedx --output /trivy/sbom.cdx.json \
               "$IMAGE"
 
-            # Pull reports from the remote Docker VM to the primary container
             rm -rf reports && mkdir -p reports
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
@@ -195,23 +196,20 @@ jobs:
           path: reports
           destination: reports
 
-  # ---------------------------------------------------------------------------
-  # 4) NEW: Create and upload deployment manifest to S3
-  # ---------------------------------------------------------------------------
+  # 4) Manual approval gate (no steps; declared in workflow)
+  # (approval jobs are declared in workflows section with type: approval)
+
+  # 5) Create and upload deployment manifest to S3
   deploy-manifest:
     docker:
       - image: cimg/base:stable
     steps:
       - checkout
-
-      # Assume the AWS role via OIDC
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
-
-      # Generate manifest.json with image URI, git SHA, UTC timestamp, and build number
       - run:
           name: Generate manifest.json
           command: |
@@ -220,14 +218,10 @@ jobs:
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE_URI="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
             TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-
             printf '{\n  "image_uri": "%s",\n  "git_sha": "%s",\n  "timestamp_utc": "%s",\n  "build_number": "%s"\n}\n' \
               "$IMAGE_URI" "$CIRCLE_SHA1" "$TS" "$CIRCLE_BUILD_NUM" > manifest.json
-
             echo "Wrote manifest.json:"
             cat manifest.json
-
-      # Upload manifest to S3 at manifests/$CIRCLE_SHA1.json
       - run:
           name: Upload manifest to S3
           command: |
@@ -236,22 +230,48 @@ jobs:
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
 # ---------------------------------------------------------------------------
-# Workflow
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Workflow (with branch filters + manual approval)
+# WORKFLOWS
 # ---------------------------------------------------------------------------
 workflows:
-  build-and-test:
+  # Runs on every commit and sets pipeline parameters based on changed files
+  setup-workflow:
+    when: on_success
     jobs:
-      # Run on all branches
-      - lint-and-unit-test
+      - path-filtering/filter:
+          name: set-pipeline-flags
+          base-revision: main
+          config-path: .circleci/config.yml
+          # Each line: <regex> <parameter-name> <true|false>
+          # Order matters; lines below collectively set the two flags.
+          mapping: |
+            # Always run everything if the CircleCI config changes
+            ^\.circleci/.* run-tests true
+            ^\.circleci/.* run-build-deploy true
+
+            # Application code changes -> run tests AND build/deploy
+            ^((app|src|backend|api)/.*|Dockerfile|requirements\.txt)$ run-tests true
+            ^((app|src|backend|api)/.*|Dockerfile|requirements\.txt)$ run-build-deploy true
+
+            # Test-only changes -> run tests only
+            ^tests/.* run-tests true
+
+            # Docs-only changes -> leave both flags at defaults (false)
+
+  # Main workflow which respects the pipeline flags and branch rules
+  main-workflow:
+    when: on_success
+    jobs:
+      # --- Tests (all branches) ---
+      - lint-and-unit-test:
+          when: << pipeline.parameters.run-tests >>
       - integration-test:
+          when: << pipeline.parameters.run-tests >>
           requires:
             - lint-and-unit-test
 
-      # Build → Scan → Push: only on main
+      # --- Build/Scan/Push (main branch only) ---
       - build-scan-and-push-image:
+          when: << pipeline.parameters.run-build-deploy >>
           requires:
             - integration-test
           context:
@@ -260,17 +280,19 @@ workflows:
             branches:
               only: main
 
-      # Manual gate after image push: only on main
+      # --- Manual approval gate (main only) ---
       - hold-for-approval:
           type: approval
+          when: << pipeline.parameters.run-build-deploy >>
           requires:
             - build-scan-and-push-image
           filters:
             branches:
               only: main
 
-      # Deploy manifest after approval: only on main
+      # --- Deploy manifest (main only, after approval) ---
       - deploy-manifest:
+          when: << pipeline.parameters.run-build-deploy >>
           requires:
             - hold-for-approval
           context:
