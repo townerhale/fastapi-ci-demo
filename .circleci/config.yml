@@ -112,7 +112,7 @@ jobs:
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
 
-      # Build and scan need Docker; enable DLC for speed
+      # Build/scan/push need Docker; enable DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
 
@@ -123,7 +123,6 @@ jobs:
           name: Prepare image variables
           command: |
             mkdir -p reports
-            # Keep existing value if it's already set in the context
             : "${AWS_ECR_ACCOUNT_URL:=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com}"
             echo "export AWS_ECR_ACCOUNT_URL=${AWS_ECR_ACCOUNT_URL}" >> "$BASH_ENV"
             echo "export IMAGE=${AWS_ECR_ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}" >> "$BASH_ENV"
@@ -132,7 +131,7 @@ jobs:
             echo "IMAGE=$IMAGE"
             echo "SCAN_IMAGE=$SCAN_IMAGE"
 
-      # Build the image and create a local alias used by Trivy orb
+      # Build the image and add a local tag for Trivy
       - run:
           name: Build Docker image (tag with SHA + local scan tag)
           command: |
@@ -141,15 +140,14 @@ jobs:
             docker tag "${IMAGE}" "${SCAN_IMAGE}"
 
       # Fail the job if any CRITICAL vulns are found
-      # (use the local tag so the orb doesn't need env-var expansion)
       - trivy/validate:
           image: scan:${CIRCLE_SHA1}
           severity: CRITICAL
-          ignore-unfixed: 'yes'
+          ignore-unfixed: true
           exit-code: 1
           cve-ignore-list: ""
 
-      # Create human-readable report + CycloneDX SBOM (saved to ./reports)
+      # Write human-readable report + CycloneDX SBOM
       - run:
           name: Write Trivy report + SBOM (CycloneDX)
           command: |
