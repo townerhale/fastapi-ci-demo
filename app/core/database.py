@@ -23,7 +23,7 @@ settings = get_settings()
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,  # helps avoid stale (broken) connections
-    future=True,         # use SQLAlchemy 2.x style
+    future=True,  # use SQLAlchemy 2.x style
 )
 
 # Declarative base for ORM models (you'll subclass this for real tables)

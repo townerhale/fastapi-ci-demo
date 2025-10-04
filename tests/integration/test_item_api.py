@@ -41,9 +41,11 @@ def test_create_item_persists(client: TestClient, db_session: Session) -> None:
     assert row.description == payload["description"]
 
     # As an additional check, ensure it's discoverable via a SELECT
-    one = db_session.execute(
-        select(ItemORM).where(ItemORM.id == created_id)
-    ).scalars().first()
+    one = (
+        db_session.execute(select(ItemORM).where(ItemORM.id == created_id))
+        .scalars()
+        .first()
+    )
     assert one is not None
     assert one.id == created_id
 

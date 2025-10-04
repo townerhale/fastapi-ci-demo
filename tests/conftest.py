@@ -77,7 +77,9 @@ def db_session(db_engine: Engine) -> Iterator[Session]:
     outer_tx = connection.begin()
 
     # Session bound to the same connection
-    SessionLocal = sessionmaker(bind=connection, autoflush=False, expire_on_commit=False, future=True)
+    SessionLocal = sessionmaker(
+        bind=connection, autoflush=False, expire_on_commit=False, future=True
+    )
     session: Session = SessionLocal()
 
     # Start a SAVEPOINT (nested transaction) so that flushes/commits inside

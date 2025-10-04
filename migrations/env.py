@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 # Now regular app imports work:
 from app.core.database import Base  # declarative base
+
 # Import all models so their metadata is registered on Base.metadata
 # (Add more imports as you add models)
 import app.models.item  # noqa: F401
