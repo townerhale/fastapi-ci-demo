@@ -1,12 +1,12 @@
 # .circleci/config.yml
 version: 2.1
-setup: true  # required for path-filtering (dynamic config continuation)
+setup: true  # required for dynamic config continuation with path-filtering
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
   aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in these jobs
   trivy: skedulo/trivy@0.10.0
-  path-filtering: circleci/path-filtering@1.0.0
+  path-filtering: circleci/path-filtering@0.1.5  # pin to avoid Python 3.9 requirement
 
 # ---------------------------------------------------------------------------
 # Pipeline parameters (set by path-filtering). Defaults = skip.
@@ -20,7 +20,7 @@ parameters:
     default: false
 
 # ---------------------------------------------------------------------------
-# JOBS (unchanged from your latest working config)
+# JOBS (your existing jobs)
 # ---------------------------------------------------------------------------
 jobs:
   # 1) Lint and unit tests (fast, no DB)
@@ -116,15 +116,18 @@ jobs:
       - image: cimg/base:stable
     steps:
       - checkout
+
       # Assume the AWS role via OIDC
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
+
       # Remote Docker with DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
+
       # Build the image locally with the SHA tag
       - run:
           name: Build Docker image (SHA tag)
@@ -134,6 +137,7 @@ jobs:
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
             echo "Building ${IMAGE}:${CIRCLE_SHA1}"
             docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
+
       # Security scan: fail the job on any CRITICAL findings
       - trivy/validate:
           image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
@@ -141,6 +145,7 @@ jobs:
           ignore-unfixed: false
           exit-code: 1
           cve-ignore-list: ""
+
       # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
           name: Generate Trivy reports (JSON + CycloneDX) and copy back from remote Docker
@@ -227,7 +232,8 @@ jobs:
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
 # ---------------------------------------------------------------------------
-# WORKFLOWS (use workflow-level 'when' — job-level 'when' is invalid in v2.1)
+# WORKFLOWS
+# Use workflow-level `when:` (job-level `when` is invalid in v2.1)
 # ---------------------------------------------------------------------------
 workflows:
   # 1) Always runs; sets pipeline params based on changed files
@@ -237,7 +243,6 @@ workflows:
           name: set-pipeline-flags
           base-revision: main
           config-path: .circleci/config.yml
-          # Each line: <regex> <parameter-name> <true|false>
           mapping: |
             # Always run everything if the CircleCI config changes
             ^\.circleci/.* run-tests true
@@ -252,7 +257,7 @@ workflows:
 
             # Docs-only changes -> leave both flags at defaults (false)
 
-  # 2) Tests workflow – runs only when path-filtering sets run-tests=true
+  # 2) Tests workflow – runs only when path-filtering set run-tests=true
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
