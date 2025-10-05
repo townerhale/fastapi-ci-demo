@@ -2,7 +2,7 @@ version: 2.1
 setup: true
 
 orbs:
-  path-filtering: circleci/path-filtering@2.0.4  # Use latest version
+  path-filtering: circleci/path-filtering@2.0.4
 
 workflows:
   setup-workflow:
@@ -10,9 +10,22 @@ workflows:
       - path-filtering/filter:
           executor:
             name: path-filtering/default
-            tag: "2024.01"  # This tag has Python 3.11
+            tag: "2024.01"
           base-revision: HEAD~1
           config-path: .circleci/continue.yml
           mapping: |
-            .* run-tests true
-            .* run-build-deploy true
+            app/.* run-tests true
+            src/.* run-tests true
+            tests/.* run-tests true
+            requirements.* run-tests true
+            setup\.cfg run-tests true
+            pyproject\.toml run-tests true
+            Dockerfile run-tests true
+            .circleci/.* run-tests true
+            app/.* run-build-deploy true
+            src/.* run-build-deploy true
+            requirements.* run-build-deploy true
+            setup\.cfg run-build-deploy true
+            pyproject\.toml run-build-deploy true
+            Dockerfile run-build-deploy true
+            .circleci/.* run-build-deploy true
