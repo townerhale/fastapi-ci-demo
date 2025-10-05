@@ -20,7 +20,7 @@ parameters:
     default: false
 
 # ---------------------------------------------------------------------------
-# JOBS (unchanged from your latest config, except names/comments)
+# JOBS (from your latest config)
 # ---------------------------------------------------------------------------
 jobs:
   # 1) Lint and unit tests (fast, no DB)
@@ -196,10 +196,7 @@ jobs:
           path: reports
           destination: reports
 
-  # 4) Manual approval gate (no steps; declared in workflow)
-  # (approval jobs are declared in workflows section with type: approval)
-
-  # 5) Create and upload deployment manifest to S3
+  # 4) Create and upload deployment manifest to S3
   deploy-manifest:
     docker:
       - image: cimg/base:stable
@@ -235,7 +232,6 @@ jobs:
 workflows:
   # Runs on every commit and sets pipeline parameters based on changed files
   setup-workflow:
-    when: on_success
     jobs:
       - path-filtering/filter:
           name: set-pipeline-flags
@@ -257,9 +253,8 @@ workflows:
 
             # Docs-only changes -> leave both flags at defaults (false)
 
-  # Main workflow which respects the pipeline flags and branch rules
+  # Main workflow respects the pipeline flags and branch rules
   main-workflow:
-    when: on_success
     jobs:
       # --- Tests (all branches) ---
       - lint-and-unit-test:
