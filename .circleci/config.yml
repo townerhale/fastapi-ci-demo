@@ -8,7 +8,10 @@ workflows:
   setup-workflow:
     jobs:
       - path-filtering/filter:
-          # Compare against the parent commit instead of a branch
+          # Add this executor configuration
+          executor:
+            name: path-filtering/default
+            python-version: "3.11"  # Use Python 3.11
           base-revision: HEAD~1
           config-path: .circleci/continue.yml
           mapping: |
