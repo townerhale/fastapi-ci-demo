@@ -132,3 +132,4 @@ See `API.md` for examples.
 - Port 8000 busy → free the port or change `--port`.
 - Docker not running → open Docker Desktop; `docker info` should succeed.
 - `.env` vs `.env.example` → copy example to `.env`; don’t commit secrets.
+# Updated README
