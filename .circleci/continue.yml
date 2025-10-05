@@ -32,6 +32,8 @@ jobs:
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
+    environment: 
+       CACHE_VERSION: v2  # <-- Add this to bust cache
     working_directory: ~/project
     steps:
       - checkout
