@@ -1,6 +1,6 @@
 # .circleci/config.yml
 version: 2.1
-setup: true  # enable dynamic config so path-filtering can set pipeline params
+setup: true  # required for path-filtering (dynamic config continuation)
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
@@ -20,7 +20,7 @@ parameters:
     default: false
 
 # ---------------------------------------------------------------------------
-# JOBS (from your latest config)
+# JOBS (unchanged from your latest working config)
 # ---------------------------------------------------------------------------
 jobs:
   # 1) Lint and unit tests (fast, no DB)
@@ -227,10 +227,10 @@ jobs:
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
 # ---------------------------------------------------------------------------
-# WORKFLOWS
+# WORKFLOWS (use workflow-level 'when' — job-level 'when' is invalid in v2.1)
 # ---------------------------------------------------------------------------
 workflows:
-  # Runs on every commit and sets pipeline parameters based on changed files
+  # 1) Always runs; sets pipeline params based on changed files
   setup-workflow:
     jobs:
       - path-filtering/filter:
@@ -238,7 +238,6 @@ workflows:
           base-revision: main
           config-path: .circleci/config.yml
           # Each line: <regex> <parameter-name> <true|false>
-          # Order matters; lines below collectively set the two flags.
           mapping: |
             # Always run everything if the CircleCI config changes
             ^\.circleci/.* run-tests true
@@ -253,45 +252,37 @@ workflows:
 
             # Docs-only changes -> leave both flags at defaults (false)
 
-  # Main workflow respects the pipeline flags and branch rules
-  main-workflow:
+  # 2) Tests workflow – runs only when path-filtering sets run-tests=true
+  tests-workflow:
+    when: << pipeline.parameters.run-tests >>
     jobs:
-      # --- Tests (all branches) ---
-      - lint-and-unit-test:
-          when: << pipeline.parameters.run-tests >>
+      - lint-and-unit-test
       - integration-test:
-          when: << pipeline.parameters.run-tests >>
           requires:
             - lint-and-unit-test
 
-      # --- Build/Scan/Push (main branch only) ---
+  # 3) Build/Deploy workflow – runs only when run-build-deploy=true
+  build-deploy-workflow:
+    when: << pipeline.parameters.run-build-deploy >>
+    jobs:
       - build-scan-and-push-image:
-          when: << pipeline.parameters.run-build-deploy >>
-          requires:
-            - integration-test
           context:
             - aws-config
           filters:
             branches:
               only: main
-
-      # --- Manual approval gate (main only) ---
       - hold-for-approval:
           type: approval
-          when: << pipeline.parameters.run-build-deploy >>
           requires:
             - build-scan-and-push-image
           filters:
             branches:
               only: main
-
-      # --- Deploy manifest (main only, after approval) ---
       - deploy-manifest:
-          when: << pipeline.parameters.run-build-deploy >>
-          requires:
-            - hold-for-approval
           context:
             - aws-config
+          requires:
+            - hold-for-approval
           filters:
             branches:
               only: main
