@@ -1,9 +1,20 @@
-# .circleci/config.yml
+# ====================================================================
+# FILE: .circleci/config.yml   (SETUP CONFIG - runs on every commit)
+# ====================================================================
 version: 2.1
 setup: true
 
 orbs:
-  path-filtering: circleci/path-filtering@0.1.5
+  path-filtering: circleci/path-filtering@1.0.0
+
+# Pipeline parameters toggled by path-filtering
+parameters:
+  run-tests:
+    type: boolean
+    default: false
+  run-build-deploy:
+    type: boolean
+    default: false
 
 workflows:
   setup-workflow:
@@ -11,18 +22,25 @@ workflows:
       - path-filtering/filter:
           name: set-pipeline-flags
           base-revision: main
-          # Continue the pipeline using the file below (no `setup:` in it)
+          # Continue into the main pipeline file after mapping
           config-path: .circleci/continue.yml
+          # Map changed paths -> pipeline parameters
+          # Notes:
+          # - If .circleci/** changes, we run EVERYTHING.
+          # - App code changes run tests + build/deploy.
+          # - Test-only changes run tests only.
+          # - Docs-only changes (README.md) set nothing -> both params remain false.
           mapping: |
-            # If CircleCI config changes, run everything
-            ^\.circleci/.* run-tests true
-            ^\.circleci/.* run-build-deploy true
+            ^\.circleci/.*                     run-tests          true
+            ^\.circleci/.*                     run-build-deploy   true
 
-            # App code changes -> run tests AND build/deploy
-            ^((app|src|backend|api)/.*|Dockerfile|requirements\.txt)$ run-tests true
-            ^((app|src|backend|api)/.*|Dockerfile|requirements\.txt)$ run-build-deploy true
+            ^app/.*                            run-tests          true
+            ^app/.*                            run-build-deploy   true
+            ^Dockerfile$                       run-tests          true
+            ^Dockerfile$                       run-build-deploy   true
 
-            # Test-only changes -> run tests only
-            ^tests/.* run-tests true
+            ^tests/.*                          run-tests          true
+            ^scripts/.*                        run-tests          true
 
-            # Docs-only (e.g., README.md) -> leave both flags false (skip)
+            ^README\.md$                       run-tests          false
+            ^README\.md$                       run-build-deploy   false

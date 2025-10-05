@@ -1,22 +1,16 @@
-# .circleci/continue.yml
+# ====================================================================
+# FILE: .circleci/continue.yml  (CONTINUATION CONFIG - real pipeline)
+# ====================================================================
 version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
-  aws-ecr: circleci/aws-ecr@9.3.5   # kept for completeness; not used directly in these jobs
   trivy: skedulo/trivy@0.10.0
 
-# Pipeline parameters set by path-filtering in the setup config
-parameters:
-  run-tests:
-    type: boolean
-    default: false
-  run-build-deploy:
-    type: boolean
-    default: false
-
 jobs:
+  # -----------------------------------------------------------------
   # 1) Lint and unit tests
+  # -----------------------------------------------------------------
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
@@ -49,7 +43,9 @@ jobs:
           path: test-results
           when: always
 
+  # -----------------------------------------------------------------
   # 2) Integration tests (with Postgres sidecar)
+  # -----------------------------------------------------------------
   integration-test:
     docker:
       - image: cimg/python:3.11
@@ -103,7 +99,9 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
+  # -----------------------------------------------------------------
   # 3) Build -> Scan (fail on CRITICAL) -> Push (SHA + latest)
+  # -----------------------------------------------------------------
   build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
@@ -141,7 +139,7 @@ jobs:
 
       # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
-          name: Generate Trivy reports (JSON + CycloneDX) and copy back from remote Docker
+          name: Generate Trivy reports (JSON + CycloneDX)
           command: |
             set -euo pipefail
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -194,7 +192,9 @@ jobs:
           path: reports
           destination: reports
 
-  # 4) Create and upload deployment manifest to S3
+  # -----------------------------------------------------------------
+  # 4) Create & upload deployment manifest to S3
+  # -----------------------------------------------------------------
   deploy-manifest:
     docker:
       - image: cimg/base:stable
@@ -224,11 +224,11 @@ jobs:
             aws s3 cp manifest.json "s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json" --region "${AWS_REGION}"
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
-# ---------------------------------------------------------------------------
-# WORKFLOWS (no `setup:` here)
-# ---------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# WORKFLOWS (conditional with pipeline parameters)
+# -------------------------------------------------------------------
 workflows:
-  # Tests workflow – runs only when path-filtering set run-tests=true
+  # Tests on code or test changes (and always when config changes)
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
@@ -237,7 +237,7 @@ workflows:
           requires:
             - lint-and-unit-test
 
-  # Build/Deploy workflow – runs only when run-build-deploy=true and only on main
+  # Build/Deploy only for app (and config) changes, and only on main
   build-deploy-workflow:
     when: << pipeline.parameters.run-build-deploy >>
     jobs:
@@ -247,18 +247,22 @@ workflows:
           filters:
             branches:
               only: main
+          requires:
+            - integration-test
+
       - hold-for-approval:
           type: approval
-          requires:
-            - build-scan-and-push-image
           filters:
             branches:
               only: main
+          requires:
+            - build-scan-and-push-image
+
       - deploy-manifest:
           context:
             - aws-config
-          requires:
-            - hold-for-approval
           filters:
             branches:
               only: main
+          requires:
+            - hold-for-approval
