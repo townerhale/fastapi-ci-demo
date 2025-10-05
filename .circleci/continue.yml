@@ -19,6 +19,7 @@ jobs:
   debug-parameters:
     docker:
       - image: cimg/base:stable
+      resource_class: small #minimal resources needed
     steps:
       - run:
           name: Show active parameters
@@ -32,6 +33,7 @@ jobs:
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
+    resource_class: small # Linting is lightweight
     environment: 
        CACHE_VERSION: v2  # <-- Add this to bust cache
     working_directory: ~/project
@@ -76,6 +78,8 @@ jobs:
           POSTGRES_DB: appdb
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
+    resource_class: medium # Tests need more resources
+    parallelism: 2
     working_directory: ~/project
     steps:
       - checkout
@@ -104,12 +108,16 @@ jobs:
           name: Run Alembic migrations
           command: alembic upgrade head
       - run:
-          name: Run integration tests with JUnit XML + HTML coverage
+          name: Run integration tests with splitting
           command: |
             mkdir -p test-results/integration
-            pytest tests/integration -q \
-              --junitxml=test-results/integration/pytest.xml \
-              --cov=app --cov-report=term --cov-report=html:coverage_html
+          
+          # Get test files and split them across containers
+            TESTFILES=$(circleci tests glob "tests/integration/test_*.py" | circleci tests split --split-by=timings)
+          
+            pytest $TESTFILES -q \
+             --junitxml=test-results/integration/pytest.xml \
+             --cov=app --cov-report=term --cov-report=html:coverage_html
       - store_test_results:
           path: test-results
           when: always
@@ -121,6 +129,7 @@ jobs:
   build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
+    resource_class: large # Docker builds are resource-intensive
     steps:
       - checkout
       - aws-cli/setup:
@@ -201,6 +210,7 @@ jobs:
   deploy-manifest:
     docker:
       - image: cimg/base:stable
+    resource_class: small #just uplaoding to s3
     steps:
       - checkout
       - aws-cli/setup:
