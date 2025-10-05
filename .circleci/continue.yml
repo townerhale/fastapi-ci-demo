@@ -1,9 +1,18 @@
 version: 2.1
 
+# IMPORTANT: Define parameters here in continue.yml
+parameters:
+  run-tests:
+    type: boolean
+    default: false
+  run-build-deploy:
+    type: boolean
+    default: false
+
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
   trivy: skedulo/trivy@0.10.0
-  aws-ecr: circleci/aws-ecr@9.3.5   # optional; we push with docker CLI
+  aws-ecr: circleci/aws-ecr@9.3.5
 
 jobs:
   # 1) Lint + unit tests
@@ -204,10 +213,10 @@ jobs:
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
 # --------------------------
-# Two workflows gated by flags
+# Conditional workflows based on path filtering
 # --------------------------
 workflows:
-  # Runs tests when app/tests or config changed
+  # Tests workflow: runs when test-related files change
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
@@ -216,8 +225,8 @@ workflows:
           requires:
             - lint-and-unit-test
 
-  # “main-workflow”: only on main & when build/deploy is requested
-  main-workflow:
+  # Build and deploy workflow: runs when app code changes (main branch only)
+  build-deploy-workflow:
     when: << pipeline.parameters.run-build-deploy >>
     jobs:
       - lint-and-unit-test:
