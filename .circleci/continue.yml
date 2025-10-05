@@ -1,6 +1,6 @@
 version: 2.1
 
-# IMPORTANT: Define parameters here in continue.yml
+# Define parameters that will be set by path filtering
 parameters:
   run-tests:
     type: boolean
@@ -15,6 +15,19 @@ orbs:
   aws-ecr: circleci/aws-ecr@9.3.5
 
 jobs:
+  # Debug job to show what parameters were set
+  debug-parameters:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: Show active parameters
+          command: |
+            echo "run-tests: << pipeline.parameters.run-tests >>"
+            echo "run-build-deploy: << pipeline.parameters.run-build-deploy >>"
+            echo "Branch: << pipeline.git.branch >>"
+            echo "SHA: << pipeline.git.revision >>"
+
   # 1) Lint + unit tests
   lint-and-unit-test:
     docker:
@@ -216,7 +229,12 @@ jobs:
 # Conditional workflows based on path filtering
 # --------------------------
 workflows:
-  # Tests workflow: runs when test-related files change
+  # Always run debug to see what parameters were set
+  debug-workflow:
+    jobs:
+      - debug-parameters
+
+  # Tests workflow: runs when test-related files change (on any branch)
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
