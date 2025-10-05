@@ -19,7 +19,7 @@ jobs:
   debug-parameters:
     docker:
       - image: cimg/base:stable
-      resource_class: small #minimal resources needed
+    resource_class: small #minimal resources needed
     steps:
       - run:
           name: Show active parameters
