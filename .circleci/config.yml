@@ -1,10 +1,6 @@
 version: 2.1
-setup: true
 
-orbs:
-  path-filtering: circleci/path-filtering@0.1.5
-
-# Flags toggled by path-filtering
+# IMPORTANT: Define parameters here in continue.yml
 parameters:
   run-tests:
     type: boolean
@@ -13,16 +9,256 @@ parameters:
     type: boolean
     default: false
 
+orbs:
+  aws-cli: circleci/aws-cli@5.4.1
+  trivy: skedulo/trivy@0.10.0
+  aws-ecr: circleci/aws-ecr@9.3.5
+
+jobs:
+  # 1) Lint + unit tests
+  lint-and-unit-test:
+    docker:
+      - image: cimg/python:3.11
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pip-{{ checksum "requirements.txt" }}
+            - v1-pip-
+      - run:
+          name: Install dependencies
+          command: |
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install --upgrade black pytest pytest-cov
+      - save_cache:
+          key: v1-pip-{{ checksum "requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Lint (black --check)
+          command: black --check .
+      - run:
+          name: Run unit tests (tests/unit) with JUnit XML
+          command: |
+            mkdir -p test-results/unit
+            pytest tests/unit -q --junitxml=test-results/unit/pytest.xml
+      - store_test_results:
+          path: test-results
+          when: always
+
+  # 2) Integration tests + coverage artifact
+  integration-test:
+    docker:
+      - image: cimg/python:3.11
+        environment:
+          DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/appdb
+          PIP_CACHE_DIR: ~/.cache/pip
+      - image: postgres:14-alpine
+        environment:
+          POSTGRES_DB: appdb
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+    working_directory: ~/project
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - v1-pip-{{ checksum "requirements.txt" }}
+            - v1-pip-
+      - run:
+          name: Install system & Python dependencies
+          command: |
+            sudo apk update || sudo apt-get update
+            (sudo apk add netcat-openbsd || sudo apt-get install -y netcat-openbsd) || true
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install --upgrade pytest pytest-cov
+      - save_cache:
+          key: v1-pip-{{ checksum "requirements.txt" }}
+          paths:
+            - ~/.cache/pip
+      - run:
+          name: Wait for Postgres to be ready
+          command: |
+            chmod +x scripts/wait_for_db.sh
+            ./scripts/wait_for_db.sh
+      - run:
+          name: Run Alembic migrations
+          command: alembic upgrade head
+      - run:
+          name: Run integration tests with JUnit XML + HTML coverage
+          command: |
+            mkdir -p test-results/integration
+            pytest tests/integration -q \
+              --junitxml=test-results/integration/pytest.xml \
+              --cov=app --cov-report=term --cov-report=html:coverage_html
+      - store_test_results:
+          path: test-results
+          when: always
+      - store_artifacts:
+          path: coverage_html
+          destination: coverage_html
+
+  # 3) Build -> scan (fail on CRITICAL) -> push
+  build-scan-and-push-image:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - aws-cli/setup:
+          profile_name: default
+          role_arn: ${AWS_ROLE_ARN}
+          role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
+          region: ${AWS_REGION}
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build Docker image (SHA tag)
+          command: |
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
+            docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
+      - trivy/validate:
+          image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
+          severity: CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+          cve-ignore-list: ""
+      - run:
+          name: Generate Trivy reports (JSON + CycloneDX) and copy back
+          command: |
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
+
+            docker create --name trivy-out -v /trivy alpine:3.19 sh -c "sleep 600"
+
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              --volumes-from trivy-out \
+              -v trivy-cache:/root/.cache/ \
+              aquasec/trivy:latest image \
+              --no-progress --ignore-unfixed=false \
+              --format json --output /trivy/trivy-vulns.json \
+              "$IMAGE"
+
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              --volumes-from trivy-out \
+              -v trivy-cache:/root/.cache/ \
+              aquasec/trivy:latest image \
+              --no-progress --scanners vuln,license \
+              --format cyclonedx --output /trivy/sbom.cdx.json \
+              "$IMAGE"
+
+            rm -rf reports && mkdir -p reports
+            docker cp trivy-out:/trivy/. ./reports/
+            docker rm -f trivy-out
+      - run:
+          name: Log in to ECR
+          command: |
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            aws ecr get-login-password --region "${AWS_REGION}" \
+              | docker login --username AWS --password-stdin "${ACCOUNT_URL}"
+      - run:
+          name: Tag and push (SHA and latest)
+          command: |
+            set -euo pipefail
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
+            docker tag "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
+            docker push "${IMAGE}:${CIRCLE_SHA1}"
+            docker push "${IMAGE}:latest"
+      - store_artifacts:
+          path: reports
+          destination: reports
+
+  # 4) Manual approval
+  hold-for-approval:
+    type: approval
+
+  # 5) Deploy manifest to S3
+  deploy-manifest:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - aws-cli/setup:
+          profile_name: default
+          role_arn: ${AWS_ROLE_ARN}
+          role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
+          region: ${AWS_REGION}
+      - run:
+          name: Generate manifest.json
+          command: |
+            set -euo pipefail
+            : "${MANIFEST_BUCKET:?MANIFEST_BUCKET is required (add it to the aws-config context)}"
+            ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+            IMAGE_URI="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}"
+            TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+            printf '{\n  "image_uri": "%s",\n  "git_sha": "%s",\n  "timestamp_utc": "%s",\n  "build_number": "%s"\n}\n' \
+              "$IMAGE_URI" "$CIRCLE_SHA1" "$TS" "$CIRCLE_BUILD_NUM" > manifest.json
+            echo "Wrote manifest.json:"
+            cat manifest.json
+      - run:
+          name: Upload manifest to S3
+          command: |
+            set -euo pipefail
+            aws s3 cp manifest.json "s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json" --region "${AWS_REGION}"
+            echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
+
+# --------------------------
+# Conditional workflows based on path filtering
+# --------------------------
 workflows:
-  setup-workflow:
+  # Tests workflow: runs when test-related files change
+  tests-workflow:
+    when: << pipeline.parameters.run-tests >>
     jobs:
-      - path-filtering/filter:
-          name: set-pipeline-flags
-          base-revision: << pipeline.git.base_revision >>
-          config-path: .circleci/continue.yml
-          # Using a more targeted approach
-          mapping: |
-            (app|src|tests|\.circleci)/.* run-tests true
-            (Dockerfile|requirements.*|setup\.cfg|pyproject\.toml) run-tests true
-            (app|src|\.circleci)/.* run-build-deploy true
-            (Dockerfile|requirements.*|setup\.cfg|pyproject\.toml) run-build-deploy true
+      - lint-and-unit-test
+      - integration-test:
+          requires:
+            - lint-and-unit-test
+
+  # Build and deploy workflow: runs when app code changes (main branch only)
+  build-deploy-workflow:
+    when: << pipeline.parameters.run-build-deploy >>
+    jobs:
+      - lint-and-unit-test:
+          filters:
+            branches:
+              only: main
+      - integration-test:
+          requires:
+            - lint-and-unit-test
+          filters:
+            branches:
+              only: main
+      - build-scan-and-push-image:
+          requires:
+            - integration-test
+          context:
+            - aws-config
+          filters:
+            branches:
+              only: main
+      - hold-for-approval:
+          type: approval
+          requires:
+            - build-scan-and-push-image
+          filters:
+            branches:
+              only: main
+      - deploy-manifest:
+          requires:
+            - hold-for-approval
+          context:
+            - aws-config
+          filters:
+            branches:
+              only: main
