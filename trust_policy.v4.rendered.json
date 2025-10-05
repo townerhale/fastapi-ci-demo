@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CircleCIOIDCTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::858079184343:oidc-provider/oidc.circleci.com/org/3b0bb86d-e242-43b7-b919-88e1e053782e"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.circleci.com/org/3b0bb86d-e242-43b7-b919-88e1e053782e:project_slug": "circleci/8HtgVYvZzHXTNWwbEA1e4V/JZaFfpd2Su7GMfzEDR7Z3D",
+          "oidc.circleci.com/org/3b0bb86d-e242-43b7-b919-88e1e053782e:aud": [
+            "https://circleci.com",
+            "3b0bb86d-e242-43b7-b919-88e1e053782e"
+          ]
+        },
+        "StringLike": {
+          "oidc.circleci.com/org/3b0bb86d-e242-43b7-b919-88e1e053782e:sub": "org/3b0bb86d-e242-43b7-b919-88e1e053782e/project/circleci/8HtgVYvZzHXTNWwbEA1e4V/JZaFfpd2Su7GMfzEDR7Z3D/*"
+        }
+      }
+    }
+  ]
+}

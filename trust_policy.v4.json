@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CircleCIOIDCTrust",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<AWS_ACCOUNT_ID>:oidc-provider/oidc.circleci.com/org/<YOUR_CIRCLECI_ORG_ID>"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "oidc.circleci.com/org/<YOUR_CIRCLECI_ORG_ID>:project_slug": "<YOUR_REPO_SLUG>",
+          "oidc.circleci.com/org/<YOUR_CIRCLECI_ORG_ID>:aud": [
+            "https://circleci.com",
+            "<YOUR_CIRCLECI_ORG_ID>"
+          ]
+        },
+        "StringLike": {
+          "oidc.circleci.com/org/<YOUR_CIRCLECI_ORG_ID>:sub": "org/<YOUR_CIRCLECI_ORG_ID>/project/<YOUR_REPO_SLUG>/*"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRPushPull",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:CompleteLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:InitiateLayerUpload",
+        "ecr:PutImage",
+        "ecr:BatchGetImage",
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages"
+      ],
+      "Resource": "arn:aws:ecr:<AWS_REGION>:<AWS_ACCOUNT_ID>:repository/<ECR_REPO_NAME>"
+    },
+    {
+      "Sid": "S3ListBucketPrefix",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<MANIFEST_BUCKET>",
+      "Condition": {
+        "StringLike": { "s3:prefix": [ "manifests/*" ] }
+      }
+    },
+    {
+      "Sid": "S3PutGetManifests",
+      "Effect": "Allow",
+      "Action": [ "s3:PutObject", "s3:GetObject" ],
+      "Resource": "arn:aws:s3:::<MANIFEST_BUCKET>/manifests/*"
+    }
+  ]
+}
