@@ -20,12 +20,9 @@ workflows:
           name: set-pipeline-flags
           base-revision: << pipeline.git.base_revision >>
           config-path: .circleci/continue.yml
-          # <regex> <pipeline param> <value>
+          # Using a more targeted approach
           mapping: |
-            ^(app|src|Dockerfile|requirements.*|setup\.cfg|pyproject\.toml)\b run-tests true
-            ^(app|src|Dockerfile|requirements.*|setup\.cfg|pyproject\.toml)\b run-build-deploy true
-            ^tests/.*                                         run-tests true
-            ^\.circleci/.*                                    run-tests true
-            ^\.circleci/.*                                    run-build-deploy true
-            ^(README\.md|docs/.*)                             run-tests false
-            ^(README\.md|docs/.*)                             run-build-deploy false
+            (app|src|tests|\.circleci)/.* run-tests true
+            (Dockerfile|requirements.*|setup\.cfg|pyproject\.toml) run-tests true
+            (app|src|\.circleci)/.* run-build-deploy true
+            (Dockerfile|requirements.*|setup\.cfg|pyproject\.toml) run-build-deploy true
