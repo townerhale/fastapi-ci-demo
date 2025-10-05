@@ -1,16 +1,12 @@
-# ====================================================================
-# FILE: .circleci/continue.yml  (CONTINUATION CONFIG - real pipeline)
-# ====================================================================
 version: 2.1
 
 orbs:
   aws-cli: circleci/aws-cli@5.4.1
   trivy: skedulo/trivy@0.10.0
+  aws-ecr: circleci/aws-ecr@9.3.5   # optional; we push with docker CLI
 
 jobs:
-  # -----------------------------------------------------------------
-  # 1) Lint and unit tests
-  # -----------------------------------------------------------------
+  # 1) Lint + unit tests
   lint-and-unit-test:
     docker:
       - image: cimg/python:3.11
@@ -43,9 +39,7 @@ jobs:
           path: test-results
           when: always
 
-  # -----------------------------------------------------------------
-  # 2) Integration tests (with Postgres sidecar)
-  # -----------------------------------------------------------------
+  # 2) Integration tests + coverage artifact
   integration-test:
     docker:
       - image: cimg/python:3.11
@@ -99,47 +93,34 @@ jobs:
           path: coverage_html
           destination: coverage_html
 
-  # -----------------------------------------------------------------
-  # 3) Build -> Scan (fail on CRITICAL) -> Push (SHA + latest)
-  # -----------------------------------------------------------------
+  # 3) Build -> scan (fail on CRITICAL) -> push
   build-scan-and-push-image:
     docker:
       - image: cimg/base:stable
     steps:
       - checkout
-
-      # Assume the AWS role via OIDC
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
-
-      # Remote Docker with DLC for speed
       - setup_remote_docker:
           docker_layer_caching: true
-
-      # Build the image locally with the SHA tag
       - run:
           name: Build Docker image (SHA tag)
           command: |
             set -euo pipefail
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
-            echo "Building ${IMAGE}:${CIRCLE_SHA1}"
             docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
-
-      # Security scan: fail the job on any CRITICAL findings
       - trivy/validate:
           image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
           severity: CRITICAL
           ignore-unfixed: false
           exit-code: 1
           cve-ignore-list: ""
-
-      # Generate machine-readable reports: JSON vuln report + CycloneDX SBOM
       - run:
-          name: Generate Trivy reports (JSON + CycloneDX)
+          name: Generate Trivy reports (JSON + CycloneDX) and copy back
           command: |
             set -euo pipefail
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
@@ -168,8 +149,6 @@ jobs:
             rm -rf reports && mkdir -p reports
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
-
-      # Login then push both tags (only runs if the scan passed)
       - run:
           name: Log in to ECR
           command: |
@@ -177,7 +156,6 @@ jobs:
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             aws ecr get-login-password --region "${AWS_REGION}" \
               | docker login --username AWS --password-stdin "${ACCOUNT_URL}"
-
       - run:
           name: Tag and push (SHA and latest)
           command: |
@@ -187,14 +165,15 @@ jobs:
             docker tag "${IMAGE}:${CIRCLE_SHA1}" "${IMAGE}:latest"
             docker push "${IMAGE}:${CIRCLE_SHA1}"
             docker push "${IMAGE}:latest"
-
       - store_artifacts:
           path: reports
           destination: reports
 
-  # -----------------------------------------------------------------
-  # 4) Create & upload deployment manifest to S3
-  # -----------------------------------------------------------------
+  # 4) Manual approval
+  hold-for-approval:
+    type: approval
+
+  # 5) Deploy manifest to S3
   deploy-manifest:
     docker:
       - image: cimg/base:stable
@@ -224,11 +203,11 @@ jobs:
             aws s3 cp manifest.json "s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json" --region "${AWS_REGION}"
             echo "Uploaded to s3://${MANIFEST_BUCKET}/manifests/${CIRCLE_SHA1}.json"
 
-# -------------------------------------------------------------------
-# WORKFLOWS (conditional with pipeline parameters)
-# -------------------------------------------------------------------
+# --------------------------
+# Two workflows gated by flags
+# --------------------------
 workflows:
-  # Tests on code or test changes (and always when config changes)
+  # Runs tests when app/tests or config changed
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
@@ -237,32 +216,40 @@ workflows:
           requires:
             - lint-and-unit-test
 
-  # Build/Deploy only for app (and config) changes, and only on main
-  build-deploy-workflow:
+  # “main-workflow”: only on main & when build/deploy is requested
+  main-workflow:
     when: << pipeline.parameters.run-build-deploy >>
     jobs:
-      - build-scan-and-push-image:
-          context:
-            - aws-config
+      - lint-and-unit-test:
           filters:
             branches:
               only: main
+      - integration-test:
+          requires:
+            - lint-and-unit-test
+          filters:
+            branches:
+              only: main
+      - build-scan-and-push-image:
           requires:
             - integration-test
-
-      - hold-for-approval:
-          type: approval
-          filters:
-            branches:
-              only: main
-          requires:
-            - build-scan-and-push-image
-
-      - deploy-manifest:
           context:
             - aws-config
           filters:
             branches:
               only: main
+      - hold-for-approval:
+          type: approval
+          requires:
+            - build-scan-and-push-image
+          filters:
+            branches:
+              only: main
+      - deploy-manifest:
           requires:
             - hold-for-approval
+          context:
+            - aws-config
+          filters:
+            branches:
+              only: main

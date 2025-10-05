@@ -1,13 +1,10 @@
-# ====================================================================
-# FILE: .circleci/config.yml   (SETUP CONFIG - runs on every commit)
-# ====================================================================
 version: 2.1
 setup: true
 
 orbs:
   path-filtering: circleci/path-filtering@1.0.0
 
-# Pipeline parameters toggled by path-filtering
+# Flags toggled by path-filtering
 parameters:
   run-tests:
     type: boolean
@@ -21,46 +18,14 @@ workflows:
     jobs:
       - path-filtering/filter:
           name: set-pipeline-flags
-          base-revision: main
-           # --- Fix: make sure Python is >= 3.9 for the orb's helper ---
-          pre-steps:
-            - run:
-                name: Ensure Python >= 3.9 for path-filtering
-                command: |
-                  set -e
-                  if python3 - <<'PY'
-import sys
-raise SystemExit(0 if sys.version_info[:2] >= (3,9) else 1)
-PY
-                  then
-                    echo "Python $(python3 --version) OK"
-                  else
-                    echo "Upgrading Python..."
-                    sudo apt-get update -y
-                    sudo apt-get install -y python3.11 python3.11-venv
-                    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
-                    python3 --version
-                  fi
-          # -------------------------------------------------------------
-          # Continue into the main pipeline file after mapping
-          config-path: .circleci/continue.yml
-          # Map changed paths -> pipeline parameters
-          # Notes:
-          # - If .circleci/** changes, we run EVERYTHING.
-          # - App code changes run tests + build/deploy.
-          # - Test-only changes run tests only.
-          # - Docs-only changes (README.md) set nothing -> both params remain false.
+          base-revision: << pipeline.git.base_revision >>
+          config-path: .circleci/continuation.yml
+          # <regex> <pipeline param> <value>
           mapping: |
-            ^\.circleci/.*                     run-tests          true
-            ^\.circleci/.*                     run-build-deploy   true
-
-            ^app/.*                            run-tests          true
-            ^app/.*                            run-build-deploy   true
-            ^Dockerfile$                       run-tests          true
-            ^Dockerfile$                       run-build-deploy   true
-
-            ^tests/.*                          run-tests          true
-            ^scripts/.*                        run-tests          true
-
-            ^README\.md$                       run-tests          false
-            ^README\.md$                       run-build-deploy   false
+            ^(app|src|Dockerfile|requirements.*|setup\.cfg|pyproject\.toml)\b run-tests true
+            ^(app|src|Dockerfile|requirements.*|setup\.cfg|pyproject\.toml)\b run-build-deploy true
+            ^tests/.*                                         run-tests true
+            ^\.circleci/.*                                    run-tests true
+            ^\.circleci/.*                                    run-build-deploy true
+            ^(README\.md|docs/.*)                             run-tests false
+            ^(README\.md|docs/.*)                             run-build-deploy false
