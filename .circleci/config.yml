@@ -2,16 +2,17 @@ version: 2.1
 setup: true
 
 orbs:
-  path-filtering: circleci/path-filtering@1.1.0
+  path-filtering: circleci/path-filtering@2.0.4  # Use latest version
 
 workflows:
   setup-workflow:
     jobs:
       - path-filtering/filter:
+          executor:
+            name: path-filtering/default
+            tag: "2024.01"  # This tag has Python 3.11
           base-revision: HEAD~1
           config-path: .circleci/continue.yml
           mapping: |
             .* run-tests true
             .* run-build-deploy true
-          # Use a newer base image with Python 3.9+
-          image: cimg/python:3.11
