@@ -1,4 +1,4 @@
-# FastAPI CI Demo
+# FastAPI CircleCI Demo
 
 <!-- CircleCI status badge  -->
 [![CircleCI](https://dl.circleci.com/status-badge/img/circleci/8HtgVYvZzHXTNWwbEA1e4V/JZaFfpd2Su7GMfzEDR7Z3D/tree/main.svg?style=svg&circle-token=CCIPRJ_HFt4jzZHswD2PzRy6ugq8x_14d59092a749a588aec66964a4e594e6e54e7c1c)](https://dl.circleci.com/status-badge/redirect/circleci/8HtgVYvZzHXTNWwbEA1e4V/JZaFfpd2Su7GMfzEDR7Z3D/tree/main)
