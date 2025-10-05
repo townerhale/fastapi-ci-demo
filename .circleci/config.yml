@@ -19,7 +19,7 @@ workflows:
       - path-filtering/filter:
           name: set-pipeline-flags
           base-revision: << pipeline.git.base_revision >>
-          config-path: .circleci/continuation.yml
+          config-path: .circleci/continue.yml
           # <regex> <pipeline param> <value>
           mapping: |
             ^(app|src|Dockerfile|requirements.*|setup\.cfg|pyproject\.toml)\b run-tests true
