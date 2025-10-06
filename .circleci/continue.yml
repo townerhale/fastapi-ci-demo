@@ -145,8 +145,8 @@ jobs:
           command: date +%Y-%m-%d > /tmp/trivy-date
       - restore_cache:
           keys:
-            - v3-trivy-db-{{ checksum "/tmp/trivy-date" }}
-            - v3-trivy-db-
+            - v4-trivy-db-{{ checksum "/tmp/trivy-date" }}
+            - v4-trivy-db-
       - run:
           name: Create Trivy cache directory
           command: mkdir -p /tmp/trivy-cache
@@ -207,7 +207,7 @@ jobs:
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
       - save_cache:
-          key: v3-trivy-db-{{ checksum "/tmp/trivy-date" }}
+          key: v4-trivy-db-{{ checksum "/tmp/trivy-date" }}
           paths:
             - /tmp/trivy-cache
       - run:
