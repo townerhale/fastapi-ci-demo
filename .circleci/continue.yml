@@ -264,15 +264,15 @@ workflows:
       - debug-parameters
 
   # Tests workflow: runs when test-related files change (on any branch)
+  # Jobs run in parallel for faster feedback
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
       - lint-and-unit-test
-      - integration-test:
-          requires:
-            - lint-and-unit-test
+      - integration-test
 
   # Build and deploy workflow: runs when app code changes (main branch only)
+  # Tests run in parallel, build waits for both to complete
   build-deploy-workflow:
     when: << pipeline.parameters.run-build-deploy >>
     jobs:
@@ -281,13 +281,12 @@ workflows:
             branches:
               only: main
       - integration-test:
-          requires:
-            - lint-and-unit-test
           filters:
             branches:
               only: main
       - build-scan-and-push-image:
           requires:
+            - lint-and-unit-test
             - integration-test
           context:
             - aws-config
