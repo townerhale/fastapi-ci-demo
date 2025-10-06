@@ -1,6 +1,6 @@
 version: 2.1
 
-# Define parameters that will be set by path filtering 
+# Define parameters that will be set by path filtering  
 parameters:
   run-tests:
     type: boolean
