@@ -307,7 +307,7 @@ workflows:
               only: main
       - deploy-manifest:
           requires:
-            - hold-for-approval
+            - hold-for-approval 
           context:
             - aws-config
           filters:
