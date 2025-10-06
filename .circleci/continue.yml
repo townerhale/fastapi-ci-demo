@@ -303,7 +303,7 @@ workflows:
             - aws-config
           filters:
             branches:
-              only: main
+              only: main 
       - hold-for-approval:
           type: approval
           requires:
