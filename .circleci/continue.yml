@@ -161,9 +161,9 @@ jobs:
       - run:
           name: Debug - Check cache contents
           command: |
-             echo "Contents of /tmp/trivy-cache:"
-             ls -lah /tmp/trivy-cache
-             echo "Disk usage:"
+            echo "Contents of /tmp/trivy-cache:"
+            ls -lah /tmp/trivy-cache
+            echo "Disk usage:"
             du -sh /tmp/trivy-cache
       - aws-cli/setup:
           profile_name: default
