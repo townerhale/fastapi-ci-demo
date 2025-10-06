@@ -153,18 +153,11 @@ jobs:
       - setup_remote_docker:
           docker_layer_caching: true
       - run:
-          name: Download Trivy vulnerability database
+          name: Pre-populate Trivy cache
           command: |
             docker run --rm \
               -v /tmp/trivy-cache:/root/.cache/ \
-              aquasec/trivy:latest image --download-db-only
-      - run:
-          name: Debug - Check cache contents
-          command: |
-            echo "Contents of /tmp/trivy-cache:"
-            ls -lah /tmp/trivy-cache
-            echo "Disk usage:"
-            du -sh /tmp/trivy-cache
+              aquasec/trivy:latest image --no-progress alpine:latest
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
