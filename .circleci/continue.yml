@@ -62,6 +62,10 @@ jobs:
       - store_test_results:
           path: test-results
           when: always
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - test-results
 
   # 2) Integration tests + coverage artifact
   integration-test:
@@ -122,6 +126,11 @@ jobs:
       - store_artifacts:
           path: coverage_html
           destination: coverage_html
+      - persist_to_workspace:
+          root: ~/project
+          paths:
+            - test-results
+            - coverage_html
 
   # 3) Build -> scan (fail on CRITICAL) -> push
   build-scan-and-push-image:
@@ -130,6 +139,12 @@ jobs:
     resource_class: large
     steps:
       - checkout
+      - attach_workspace:
+          at: ~/project
+      - restore_cache:
+          keys:
+            - v1-trivy-db-{{ epoch }}
+            - v1-trivy-db-
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
@@ -180,6 +195,10 @@ jobs:
             rm -rf reports && mkdir -p reports
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
+      - save_cache:
+          key: v1-trivy-db-{{ epoch }}
+          paths:
+            - ~/.cache/trivy
       - run:
           name: Log in to ECR
           command: |
