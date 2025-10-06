@@ -145,18 +145,24 @@ jobs:
           command: date +%Y-%m-%d > /tmp/trivy-date
       - restore_cache:
           keys:
-            - v2-trivy-db-{{ checksum "/tmp/trivy-date" }}
-            - v2-trivy-db-
+            - v3-trivy-db-{{ checksum "/tmp/trivy-date" }}
+            - v3-trivy-db-
       - run:
           name: Create Trivy cache directory
           command: mkdir -p /tmp/trivy-cache
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Download Trivy vulnerability database
+          command: |
+            docker run --rm \
+              -v /tmp/trivy-cache:/root/.cache/ \
+              aquasec/trivy:latest image --download-db-only
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
           role_session_name: circleci-${CIRCLE_WORKFLOW_ID}
           region: ${AWS_REGION}
-      - setup_remote_docker:
-          docker_layer_caching: true
       - run:
           name: Build Docker image (SHA tag)
           command: |
@@ -201,7 +207,7 @@ jobs:
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
       - save_cache:
-          key: v2-trivy-db-{{ checksum "/tmp/trivy-date" }}
+          key: v3-trivy-db-{{ checksum "/tmp/trivy-date" }}
           paths:
             - /tmp/trivy-cache
       - run:
