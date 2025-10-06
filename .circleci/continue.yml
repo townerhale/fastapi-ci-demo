@@ -140,10 +140,13 @@ jobs:
       - checkout
       - attach_workspace:
           at: ~/project
+      - run: 
+          name: Create date file for cache key
+          command: date +%Y-%m-%d > /tmp/trivy-date
       - restore_cache:
           keys:
-            - v1-trivy-db-{{ epoch }}
-            - v1-trivy-db-
+            - v2-trivy-db-{{ checksum "/tmp/trivy-date" }}
+            - v2-trivy-db-
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
@@ -158,6 +161,9 @@ jobs:
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
             docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
+      - run:
+          name: Create Trivy cache directory
+          command: mkdir -p /tmp/trivy-cache
       - trivy/validate:
           image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
           severity: CRITICAL
@@ -176,7 +182,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               --volumes-from trivy-out \
-              -v trivy-cache:/root/.cache/ \
+              -v /tmp/trivy-cache:/root/.cache/ \
               aquasec/trivy:latest image \
               --no-progress --ignore-unfixed=false \
               --format json --output /trivy/trivy-vulns.json \
@@ -185,7 +191,7 @@ jobs:
             docker run --rm \
               -v /var/run/docker.sock:/var/run/docker.sock \
               --volumes-from trivy-out \
-              -v trivy-cache:/root/.cache/ \
+              -v /tmp/trivy-cache:/root/.cache/ \
               aquasec/trivy:latest image \
               --no-progress --scanners vuln,license \
               --format cyclonedx --output /trivy/sbom.cdx.json \
@@ -195,9 +201,9 @@ jobs:
             docker cp trivy-out:/trivy/. ./reports/
             docker rm -f trivy-out
       - save_cache:
-          key: v1-trivy-db-{{ epoch }}
+          key: v2-trivy-db-{{ checksum "/tmp/trivy-date" }}
           paths:
-            - ~/.cache/trivy
+            - /tmp/trivy-cache
       - run:
           name: Log in to ECR
           command: |
