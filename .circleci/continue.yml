@@ -147,6 +147,9 @@ jobs:
           keys:
             - v2-trivy-db-{{ checksum "/tmp/trivy-date" }}
             - v2-trivy-db-
+      - run:
+          name: Create Trivy cache directory
+          command: mkdir -p /tmp/trivy-cache
       - aws-cli/setup:
           profile_name: default
           role_arn: ${AWS_ROLE_ARN}
@@ -161,9 +164,6 @@ jobs:
             ACCOUNT_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
             IMAGE="${ACCOUNT_URL}/${ECR_REPOSITORY_NAME}"
             docker build -t "${IMAGE}:${CIRCLE_SHA1}" .
-      - run:
-          name: Create Trivy cache directory
-          command: mkdir -p /tmp/trivy-cache
       - trivy/validate:
           image: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY_NAME}:${CIRCLE_SHA1}
           severity: CRITICAL
