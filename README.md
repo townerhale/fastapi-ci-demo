@@ -133,3 +133,4 @@ See `API.md` for examples.
 - Docker not running → open Docker Desktop; `docker info` should succeed.
 - `.env` vs `.env.example` → copy example to `.env`; don’t commit secrets.
 # Updated README
+# Testing feature branch workflow
