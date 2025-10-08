@@ -30,52 +30,54 @@ The pipeline processes a FastAPI application through testing, security scanning,
 
 ```
 ┌─────────────────┐
-│  Code Push      │
-│  to GitHub      │
+│   Code Push     │
+│   to GitHub     │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  CircleCI Setup Workflow (Path Filtering)                   │
-│  Analyzes changed files to determine which workflows to run  │
+│   CircleCI Setup Workflow (Path Filtering)                  │
+│   Analyzes changed files to determine which workflows to run│
 └────────┬────────────────────────────────────────────────────┘
          │
          ├──────────────────┬──────────────────┐
          ▼                  ▼                  ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
 │  Tests Workflow │  │ Build/Deploy    │  │  Debug          │
-│  (Any Branch)   │  │ (Main Only)     │  │  Workflow       │
+│(Feature Branches)  │ (Main Only)     │  │  Workflow       │
 └────────┬────────┘  └────────┬────────┘  └─────────────────┘
          │                    │
-    ┌────┴────┐               │
-    ▼         ▼               │
-┌────────┐ ┌──────────┐       │
-│ Lint & │ │Integration│      │
-│ Unit   │ │ Tests     │      │
-│ Tests  │ │(w/Postgres│      │
-│        │ │ Sidecar)  │      │
-└────────┘ └──────────┘       │
-                              ▼
-                    ┌─────────────────┐
-                    │ Docker Build &  │
-                    │ Security Scan   │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ Push to ECR     │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ Manual Approval │
-                    └────────┬────────┘
-                             │
-                             ▼
-                    ┌─────────────────┐
-                    │ Deploy Manifest │
-                    │ to S3           │
-                    └─────────────────┘
+   ┌─────┴─────┐        ┌─────┴─────┐
+   ▼           ▼        ▼           ▼
+┌────────┐ ┌──────────┐ ┌────────┐ ┌──────────────┐
+│ Lint & │ │Integration │ Lint & │ │Integration  │
+│ Unit   │ │ Tests    │ │ Unit   │ │ Tests       │
+│ Tests  │ │(w/Postgres │ Tests  │ │(w/Postgres  │
+│        │ │ Sidecar) │ │        │ │ Sidecar)    │
+└────────┘ └──────────┘ └────┬────────┬──────────┘
+                             │        │
+                             └────┬───┘
+                                  ▼
+                          ┌─────────────────┐
+                          │ Docker Build &  │
+                          │ Security Scan   │
+                          └────────┬────────┘
+                                   │
+                                   ▼
+                          ┌─────────────────┐
+                          │  Push to ECR    │
+                          └────────┬────────┘
+                                   │
+                                   ▼
+                          ┌─────────────────┐
+                          │ Manual Approval │
+                          └────────┬────────┘
+                                   │
+                                   ▼
+                          ┌─────────────────┐
+                          │ Deploy Manifest │
+                          │ to S3           │
+                          └─────────────────┘
 ```
 
 ### Component Mapping
@@ -383,7 +385,7 @@ This ensures:
 ### Phase 1: Enhanced Deployment Tracking
 **Implement CircleCI Deploy Markers**
 - Visual deployment timeline in CircleCI UI
-- Orchestratino of rollback workflows
+- Orchestration of rollback workflows
 - Failed deployment notifications
 - **Value:** Improved operational visibility
 
