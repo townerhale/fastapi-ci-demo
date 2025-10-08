@@ -241,13 +241,19 @@ workflows:
     jobs:
       - debug-parameters
 
-  # Tests workflow: runs when test-related files change (on any branch)
+  # Tests workflow: runs when test-related files change (feature branches only)
   # Jobs run in parallel for faster feedback
   tests-workflow:
     when: << pipeline.parameters.run-tests >>
     jobs:
-      - lint-and-unit-test
-      - integration-test
+      - lint-and-unit-test:
+          filters:
+            branches:
+              ignore: main
+      - integration-test:
+          filters:
+            branches:
+              ignore: main
 
   # Build and deploy workflow: runs when app code changes (main branch only)
   # Tests run in parallel, build waits for both to complete
