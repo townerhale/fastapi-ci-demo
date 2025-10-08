@@ -83,13 +83,14 @@ The pipeline processes a FastAPI application through testing, security scanning,
 | Business Need | Technical Solution | CircleCI Feature |
 |--------------|-------------------|------------------|
 | Fast test feedback | Parallel test execution across 2 containers | `parallelism: 2` with timing-based splitting |
-| Production-like testing | PostgreSQL database for integration tests | Multi-container Docker executor |
+| Production-like testing | PostgreSQL database for integration tests | First-class Docker support |
 | Secure AWS access | Temporary credentials via OIDC | Native OIDC support with role assumption |
 | Dependency vulnerability detection | Automated container scanning | Trivy orb integration |
 | Cost efficiency | Skip unnecessary builds | Path filtering orb |
+| Reduce redundant work| Cache dependencies & Docker layers | Declarative caching |
 | Deployment traceability | Immutable deployment records | S3 manifest with git SHA tracking |
 | Rapid troubleshooting | Direct access to failing builds | SSH debugging with rerun capability |
-| Simplified integrations | Pre-built security and cloud tools | CircleCI orb ecosystem (185+ integrations) |
+| Speed & Standardization | Use pre-built, reusable CI/CD packages | CircleCI orb ecosystem (185+ integrations) |
 
 ---
 
@@ -138,7 +139,7 @@ integration-test:
 - Lint and unit tests run in parallel with integration tests
 - Total test feedback time: Under 45 seconds
 
-**CircleCI Differentiator:** Automatic test splitting uses historical timing data to balance work across containers optimally, with no manual configuration required. CircleCI maintains this timing data automatically, ensuring splits remain balanced as test suites evolve.
+**CircleCI Differentiator:** Automatic test splitting uses historical timing data to balance work across containers optimally, with no manual configuration required. CircleCI maintains this timing data automatically, ensuring splits remain balanced as test suites evolve. This ability to intelligently parallelize work is a core differentiator, enabling customers to run thousands of tests in just a few minutes and maintain rapid feedback loops at scale. 
 
 ### 3. Zero-Credential Security with OIDC
 
@@ -160,7 +161,7 @@ integration-test:
 
 **CircleCI Differentiator:** Native OIDC support through the AWS CLI orb eliminates custom authentication logic and handles credential refresh automatically. The implementation required just 4 lines of configuration compared to dozens of lines of custom scripting in other platforms.
 
-### 4. Production-Equivalent Testing with Database Sidecars
+### 4. First-Class Docker Support for Complex Testing
 
 **Challenge:** Unit tests with mocked databases miss real-world SQL query issues and schema migrations.
 
@@ -187,7 +188,7 @@ integration-test:
 - Validates complex queries and transactions
 - No external database service required
 
-**CircleCI Differentiator:** First-class Docker support makes multi-container jobs trivial to configure, with automatic networking between containers. The sidecar pattern enables sophisticated integration testing without infrastructure management overhead.
+**CircleCI Differentiator:** First-class Docker support is a key differentiator, making it trivial to configure multi-container jobs with automatic networking. The database sidecar pattern shown here is a powerful example of this capability, enabling sophisticated integration testing against production-like services without any infrastructure management overhead.
 
 ### 5. Comprehensive Caching Strategy
 
@@ -198,7 +199,6 @@ integration-test:
 **Caching Layers:**
 1. **Python dependencies:** Cached by `requirements.txt` checksum
 2. **Docker layer caching:** Reuses unchanged Dockerfile layers
-3. **Test results:** Persisted across jobs via workspaces
 
 **Performance Impact:**
 - Dependency installation: 15 seconds → 3 seconds (80% faster)
@@ -260,7 +260,7 @@ jobs:
 - Consistent patterns across different tools
 - Community-contributed orbs for niche use cases
 
-**CircleCI Differentiator:** CircleCI's orb registry offers the largest selection of pre-built integrations in the CI/CD market (185+ certified and partner orbs). Orbs are parameterized, versioned, and documented, making them significantly more maintainable than copy-pasted scripts or GitHub Actions marketplace items.
+**CircleCI Differentiator:** Orbs are more than just integrations; they are reusable, versioned packages of configuration that promote speed and efficiency. By encapsulating complex logic, Orbs allow teams to avoid rewriting boilerplate code and adopt best practices with a single line. This promotes standardization and serves as operational guardrails, ensuring that security scans, deployments, and other critical tasks are performed consistently and correctly across all projects. 
 
 ### 8. Streamlined Troubleshooting with SSH Debugging
 
@@ -280,13 +280,13 @@ jobs:
 - Inspect environment variables, file permissions, network connectivity
 - Significantly faster root cause analysis
 
-**CircleCI Differentiator:** SSH debugging is built into the platform and works seamlessly with all execution environments (Docker, machine, macOS). This capability is unavailable or requires significant configuration in other CI/CD platforms.
+**CircleCI Differentiator:** This is a critical differentiator unique to CircleCI. SSH debugging is built into the platform and works seamlessly with all execution environments (Docker, machine, macOS). This capability is unavailable or requires significant configuration in other CI/CD platforms.
 
 ### 9. Optimized Resource Allocation
 
 **Challenge:** Over-provisioning resources wastes money; under-provisioning slows builds.
 
-**Solution:** Assigned appropriate resource classes based on job requirements.
+**Solution:** Assigned appropriate resource classes based on job requirements, leveraging the largest selection of resource classes in any cloud CI solution. 
 
 **Resource Sizing:**
 - **Small (1 vCPU, 2GB RAM):** Linting and deployment manifest jobs
@@ -297,6 +297,9 @@ jobs:
 - Right-sized resources prevent over-provisioning
 - Parallel execution reduces total wall-clock time
 - Path filtering eliminates unnecessary job execution
+- Insights-driven sizing: CircleCI Insights provides data to identify underutilized resources, allowing teams to make informed decisions.
+
+**CircleCI Differentiator:** In addition to offering the widest array of resource sizes in any cloud CI solution, CircleCI Insights provides actionable recommendations when jobs are consistently underutilizing their allocated resources.
 
 ---
 
@@ -328,9 +331,9 @@ jobs:
 
 ### Industry Context
 
-CircleCI workflows complete on average 40% faster than competing platforms, and this pipeline demonstrates why. The combination of intelligent test splitting, comprehensive caching, optimized resource allocation, and conditional execution creates a feedback loop that keeps developers in flow state rather than context-switching during long build waits.
+The results from this pipeline align with broader industry analysis on the value of a high-performance CI/CD platform. A 2021 commissioned study by Forrester Consulting, The Total Economic Impact™ Of CircleCI, found that customers could achieve a 664% ROI over three years.
 
-Beyond speed improvements, CircleCI customers achieve a 664% ROI over three years according to independent analysis, demonstrating the business value of investing in best-in-class CI/CD. The performance gains, reduced operational overhead, and improved developer productivity shown in this implementation contribute directly to this ROI through faster time-to-market and reduced infrastructure costs.
+This reference architecture demonstrates how such results are possible. The combination of intelligent test splitting (59% faster feedback), comprehensive caching, and conditional path filtering creates a highly efficient workflow. These features directly contribute to the primary ROI drivers identified in the study: improved developer productivity and significant reductions in infrastructure and operational costs.
 
 ## Technical Implementation Details
 
@@ -380,7 +383,7 @@ This ensures:
 ### Phase 1: Enhanced Deployment Tracking
 **Implement CircleCI Deploy Markers**
 - Visual deployment timeline in CircleCI UI
-- Built-in rollback functionality
+- Orchestratino of rollback workflows
 - Failed deployment notifications
 - **Value:** Improved operational visibility
 
